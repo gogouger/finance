@@ -3,7 +3,10 @@ set -euo pipefail
 
 # Webhooks remain the fast path. This bounded daily reconciliation repairs
 # missed provider events without exposing the internal key on the host CLI.
-exec 9>/tmp/finance-nightly-reconcile.lock
+# This job runs as root from /etc/cron.d. Keep the lock out of the sticky /tmp
+# directory: Linux protected_regular can reject a root open when an earlier
+# manual run created the file as another user.
+exec 9>/run/lock/finance-nightly-reconcile.lock
 flock -n 9 || exit 0
 
 docker exec -i finance-finance-1 python - <<'PY'
