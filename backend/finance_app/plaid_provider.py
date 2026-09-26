@@ -2,8 +2,11 @@ import json
 import os
 import urllib.error
 import urllib.request
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
+
+from cryptography.fernet import Fernet, InvalidToken
 
 
 class PlaidProviderError(RuntimeError):
@@ -424,6 +427,27 @@ class ReleaseGatedPlaidProvider(UnconfiguredPlaidProvider):
         )
 
 
+def _credentials() -> tuple[str | None, str | None]:
+    credentials_file = os.environ.get("PLAID_CREDENTIALS_FILE")
+    key_file = os.environ.get("PLAID_CREDENTIALS_KEY_FILE")
+    if not credentials_file and not key_file:
+        return os.environ.get("PLAID_CLIENT_ID"), os.environ.get("PLAID_SECRET")
+    if not credentials_file or not key_file:
+        raise RuntimeError("both Plaid credential file settings are required")
+    try:
+        decrypted = Fernet(Path(key_file).read_bytes().strip()).decrypt(
+            Path(credentials_file).read_bytes()
+        )
+        document = json.loads(decrypted)
+        client_id = document["client_id"]
+        secret = document["secret"]
+    except (OSError, InvalidToken, ValueError, KeyError, TypeError) as error:
+        raise RuntimeError("encrypted Plaid credentials could not be loaded") from error
+    if not isinstance(client_id, str) or not client_id or not isinstance(secret, str) or not secret:
+        raise RuntimeError("encrypted Plaid credentials are invalid")
+    return client_id, secret
+
+
 class HttpPlaidProvider(PlaidProvider):
     def __init__(self, client_id: str, secret: str, environment: str = "sandbox"):
         self._client_id = client_id
@@ -567,8 +591,7 @@ class HttpPlaidProvider(PlaidProvider):
 def create_plaid_provider() -> PlaidProvider:
     if os.environ.get("PLAID_MODE") == "fake":
         return FakePlaidProvider()
-    client_id = os.environ.get("PLAID_CLIENT_ID")
-    secret = os.environ.get("PLAID_SECRET")
+    client_id, secret = _credentials()
     if not client_id or not secret:
         return UnconfiguredPlaidProvider()
     environment = os.environ.get("PLAID_ENVIRONMENT", "sandbox").lower()

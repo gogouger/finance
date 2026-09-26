@@ -27,6 +27,8 @@ services:
       - /opt/data/finance/data:/data
       - /opt/data/finance/backups:/backups
       - /opt/data/finance/release-gates.json:/run/finance/release-gates.json:ro
+      - /opt/data/finance/secrets/plaid-credentials.fernet:/run/secrets/plaid-credentials.fernet:ro
+      - /opt/data/finance/keys/plaid-credentials.key:/run/secrets/plaid-credentials.key:ro
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=16m
     expose:
