@@ -432,17 +432,16 @@ def test_private_shell_requires_passkey_and_sensitive_actions_require_fresh_auth
 
 
 def test_plaid_sandbox_link_exchange_health_and_disconnect(running_service: str):
-    fresh_owner = {
+    owner = {
         "X-Forwarded-User": "owner",
         "X-Auth-Method": "webauthn",
-        "X-Auth-Time": str(time.time()),
     }
     with urllib.request.urlopen(
         _json_request(
             f"{running_service}/api/private/connections/plaid/link-token",
             {"connection_type": "credit", "display_name": "Sandbox card"},
             method="POST",
-            headers=fresh_owner,
+            headers=owner,
         )
     ) as response:
         link = json.load(response)
@@ -465,7 +464,7 @@ def test_plaid_sandbox_link_exchange_health_and_disconnect(running_service: str)
                 "institution_name": "First Platypus Bank",
             },
             method="POST",
-            headers=fresh_owner,
+            headers=owner,
         )
     ) as response:
         connection = json.load(response)
@@ -476,7 +475,6 @@ def test_plaid_sandbox_link_exchange_health_and_disconnect(running_service: str)
     assert "access_token" not in connection
     assert "public_token" not in connection
 
-    owner = {"X-Forwarded-User": "owner", "X-Auth-Method": "webauthn"}
     with urllib.request.urlopen(
         _json_request(
             f"{running_service}/api/private/connections", headers=owner
@@ -489,7 +487,7 @@ def test_plaid_sandbox_link_exchange_health_and_disconnect(running_service: str)
         _json_request(
             f"{running_service}/api/private/connections/{connection['id']}",
             method="DELETE",
-            headers=fresh_owner,
+            headers=owner,
         )
     ) as response:
         disconnected = json.load(response)

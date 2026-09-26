@@ -5,7 +5,7 @@ import {
   PlaidLinkOptions,
   usePlaidLink,
 } from "react-plaid-link";
-import { FinanceNav, readFinanceSession } from "./navigation";
+import { FinanceNav } from "./navigation";
 
 type ConnectionType = "banking" | "credit" | "investment";
 
@@ -53,11 +53,6 @@ const choices: Array<{
 
 function choiceFor(type: string | null) {
   return choices.find((choice) => choice.type === type);
-}
-
-function freshConnectionUrl(type: ConnectionType) {
-  const returnTo = `/settings/connections?connect=${encodeURIComponent(type)}`;
-  return `/oauth2/start?return_to=${encodeURIComponent(returnTo)}&sensitive=true`;
 }
 
 async function responseJson<T>(response: Response): Promise<T> {
@@ -192,11 +187,6 @@ export function Connections() {
     setMessage("");
     setError("");
     try {
-      const auth = await readFinanceSession();
-      if (!auth.fresh) {
-        location.assign(freshConnectionUrl(type));
-        return;
-      }
       const result = await responseJson<{ link_token: string }>(
         await fetch("/api/private/connections/plaid/link-token", {
           method: "POST",

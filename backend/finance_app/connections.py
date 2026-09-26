@@ -5,7 +5,7 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from .auth import require_fresh_owner, require_owner
+from .auth import require_owner
 from .plaid_provider import PlaidProviderError
 
 
@@ -55,7 +55,7 @@ def _audit(request: Request, owner: str, action: str, resource_id: str) -> None:
 
 @router.post("/api/private/connections/plaid/link-token")
 def create_link_token(payload: LinkTokenRequest, request: Request) -> dict:
-    owner = require_fresh_owner(request)
+    owner = require_owner(request)
     products = PRODUCTS[payload.connection_type]
     client_user_id = hashlib.sha256(owner.encode()).hexdigest()
     try:
@@ -75,7 +75,7 @@ def create_link_token(payload: LinkTokenRequest, request: Request) -> dict:
 
 @router.post("/api/private/connections/plaid/exchange")
 def exchange_public_token(payload: ExchangeRequest, request: Request) -> dict:
-    owner = require_fresh_owner(request)
+    owner = require_owner(request)
     try:
         token_response = request.app.state.plaid.exchange_public_token(
             payload.public_token
@@ -116,7 +116,7 @@ def list_connections(request: Request) -> list[dict]:
 
 @router.delete("/api/private/connections/{connection_id}")
 def disconnect(connection_id: str, request: Request) -> dict:
-    owner = require_fresh_owner(request)
+    owner = require_owner(request)
     connection = request.app.state.storage.get_connection(owner, connection_id)
     if connection is None:
         raise HTTPException(status_code=404, detail="connection not found")

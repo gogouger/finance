@@ -32,7 +32,7 @@ finance.gordongouger.com {
 			request_header -X-Auth-Require-Fresh
 
 			@fresh {
-				path /api/private/security/fresh-check /api/private/connections/plaid/* /api/private/lifecycle/* /api/private/mcp/grants* /api/private/payroll/approval /api/private/payroll/link-token /api/private/payroll/manual /api/private/investments/imports/*
+				path /api/private/security/fresh-check /api/private/lifecycle/* /api/private/mcp/grants* /api/private/payroll/approval /api/private/payroll/link-token /api/private/payroll/manual /api/private/investments/imports/*
 			}
 			request_header @fresh X-Auth-Require-Fresh true
 
