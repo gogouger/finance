@@ -98,7 +98,9 @@ def test_production_plaid_is_fail_closed_until_every_release_gate_passes(
             }
         )
     )
-    assert isinstance(create_plaid_provider(), ReleaseGatedPlaidProvider)
+    provider = create_plaid_provider()
+    assert isinstance(provider, ReleaseGatedPlaidProvider)
+    assert provider.environment == "production"
 
     gates = {gate: True for gate in REQUIRED_RELEASE_GATES}
     gates["zap_staging"] = False

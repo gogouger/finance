@@ -421,6 +421,8 @@ class UnconfiguredPlaidProvider(PlaidProvider):
 
 
 class ReleaseGatedPlaidProvider(UnconfiguredPlaidProvider):
+    environment = "production"
+
     def _missing(self):
         raise PlaidProviderError(
             "Plaid production linking is disabled until every release gate passes"
