@@ -163,6 +163,20 @@ def test_verified_passkey_login_issues_only_server_validated_auth_headers(oidc_s
     assert authenticated.headers["X-Auth-Method"] == "webauthn"
     assert int(authenticated.headers["X-Auth-Time"]) > int(time.time()) - 30
 
+    with urllib.request.urlopen(
+        urllib.request.Request(
+            f"{bridge}/oauth2/session", headers={"Cookie": session_cookie}
+        )
+    ) as response:
+        assert json.load(response) == {"authenticated": True, "fresh": True}
+        assert response.headers["Cache-Control"] == "no-store"
+
+
+def test_browser_session_discloses_no_identity_when_signed_out(oidc_services):
+    _, bridge = oidc_services
+    with urllib.request.urlopen(f"{bridge}/oauth2/session") as response:
+        assert json.load(response) == {"authenticated": False, "fresh": False}
+
 
 @pytest.mark.parametrize("mode", ["password", "recovery"])
 def test_password_and_recovery_tokens_never_create_a_bridge_session(
@@ -333,5 +347,5 @@ def test_caddy_contract_strips_spoofable_headers_before_forward_auth():
     proxied = caddyfile.index("reverse_proxy finance:8080", authorized)
     assert route < stripped < authorized < proxied
     assert "copy_headers X-Forwarded-User X-Auth-Method X-Auth-Time" in caddyfile
-    assert "path /oauth2/start /oauth2/callback /oauth2/logout /logged-out" in caddyfile
+    assert "path /oauth2/start /oauth2/callback /oauth2/logout /oauth2/session /logged-out" in caddyfile
     assert "path /oauth2/auth" not in caddyfile

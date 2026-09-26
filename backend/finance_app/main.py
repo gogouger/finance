@@ -82,6 +82,14 @@ if assets_dir.exists():
     app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
 
 
+def application_shell() -> FileResponse:
+    return FileResponse(
+        frontend_dir / "index.html",
+        media_type="text/html",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"service": "finance", "status": "ok"}
@@ -115,14 +123,14 @@ def fresh_authentication_check(request: Request) -> dict[str, bool]:
 
 @app.get("/", include_in_schema=False)
 def index() -> FileResponse:
-    return FileResponse(frontend_dir / "index.html", media_type="text/html")
+    return application_shell()
 
 
 @app.get("/housing", include_in_schema=False)
 @app.get("/retirement", include_in_schema=False)
 @app.get("/preview", include_in_schema=False)
 def public_application_route() -> FileResponse:
-    return FileResponse(frontend_dir / "index.html", media_type="text/html")
+    return application_shell()
 
 
 @app.get("/dashboard", include_in_schema=False)
@@ -130,4 +138,4 @@ def public_application_route() -> FileResponse:
 @app.get("/settings/connections", include_in_schema=False)
 def private_application_route(request: Request) -> FileResponse:
     require_owner(request)
-    return FileResponse(frontend_dir / "index.html", media_type="text/html")
+    return application_shell()

@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   PlaidLinkError,
   PlaidLinkOnSuccess,
   PlaidLinkOptions,
   usePlaidLink,
 } from "react-plaid-link";
+import { FinanceNav, readFinanceSession } from "./navigation";
 
 type ConnectionType = "banking" | "credit" | "investment";
 
@@ -49,6 +50,15 @@ const choices: Array<{
     label: "Connect an investment account",
   },
 ];
+
+function choiceFor(type: string | null) {
+  return choices.find((choice) => choice.type === type);
+}
+
+function freshConnectionUrl(type: ConnectionType) {
+  const returnTo = `/settings/connections?connect=${encodeURIComponent(type)}`;
+  return `/oauth2/start?return_to=${encodeURIComponent(returnTo)}&sensitive=true`;
+}
 
 async function responseJson<T>(response: Response): Promise<T> {
   if (response.ok) return response.json() as Promise<T>;
@@ -152,6 +162,7 @@ export function Connections() {
   const [session, setSession] = useState<LinkSession | null>(null);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const resumedConnection = useRef(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -167,11 +178,25 @@ export function Connections() {
 
   useEffect(() => { void load(); }, [load]);
 
+  useEffect(() => {
+    if (resumedConnection.current) return;
+    resumedConnection.current = true;
+    const pending = choiceFor(new URLSearchParams(location.search).get("connect"));
+    if (!pending) return;
+    history.replaceState(null, "", "/settings/connections");
+    void begin(pending.type, pending.title);
+  }, []);
+
   async function begin(type: ConnectionType, title: string) {
     setWorking(type);
     setMessage("");
     setError("");
     try {
+      const auth = await readFinanceSession();
+      if (!auth.fresh) {
+        location.assign(freshConnectionUrl(type));
+        return;
+      }
       const result = await responseJson<{ link_token: string }>(
         await fetch("/api/private/connections/plaid/link-token", {
           method: "POST",
@@ -181,7 +206,10 @@ export function Connections() {
       );
       setSession({ token: result.link_token, connectionType: type, displayName: title });
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Plaid Link could not start.");
+      const message = reason instanceof Error ? reason.message : "";
+      setError(message === "Load failed" || message === "Failed to fetch"
+        ? "The secure connection step was interrupted. Reload this page and try again."
+        : message || "Plaid Link could not start.");
     } finally {
       setWorking(null);
     }
@@ -226,12 +254,7 @@ export function Connections() {
 
   return (
     <main>
-      <a className="skip-link" href="#main-content">Skip to main content</a>
-      <nav aria-label="Primary navigation">
-        <a className="brand" href="/" aria-label="Finance home">F<span>inance</span></a>
-        <div className="nav-links"><a href="/dashboard">Dashboard</a><a href="/settings/connections" aria-current="page">Connections</a><a href="https://gordongouger.com/projects.html">Gordon Gouger</a></div>
-      </nav>
-      <span id="main-content" tabIndex={-1} />
+      <FinanceNav />
       <header className="dashboard-head connections-head">
         <a className="back-link" href="/dashboard">← Dashboard</a>
         <p className="kicker">Private data sources</p>

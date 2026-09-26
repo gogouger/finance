@@ -13,7 +13,7 @@ finance.gordongouger.com {
 	}
 
 	@oidc_browser {
-		path /oauth2/start /oauth2/callback /oauth2/logout /logged-out
+		path /oauth2/start /oauth2/callback /oauth2/logout /oauth2/session /logged-out
 	}
 	handle @oidc_browser {
 		reverse_proxy finance-oidc-bridge:8081

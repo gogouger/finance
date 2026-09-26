@@ -2,6 +2,7 @@ import { FormEvent, StrictMode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
 import { Connections } from "./connections";
+import { FinanceNav } from "./navigation";
 import { DashboardPreview, HousingVisuals, RetirementVisuals } from "./visuals";
 
 const tools = [
@@ -83,13 +84,10 @@ const retirementDefaults: RetirementInputs = {
   capital_gains_tax_rate_percent: 15,
 };
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
-
-function Nav() {
-  return <><a className="skip-link" href="#main-content">Skip to main content</a><nav aria-label="Primary navigation"><a className="brand" href="/" aria-label="Finance home">F<span>inance</span></a><div className="nav-links"><a href="https://gordongouger.com/projects.html">Gordon Gouger</a><a href="/preview">Dashboard demo</a><a href="/dashboard">Owner sign in</a><a href="/settings/connections">Connections</a></div></nav><span id="main-content" tabIndex={-1} /></>;
-}
+const Nav = FinanceNav;
 
 function Landing() {
-  return <main><Nav /><section className="hero" aria-labelledby="page-title"><p className="kicker">A clearer household balance sheet</p><h1 id="page-title">Your money, explained.</h1><p className="lede">One private picture of what you own, spend, and grow—plus transparent tools for the two decisions that reshape a lifetime.</p></section><section className="areas" aria-label="Finance tools">{tools.map((tool, index) => <article className="card" key={tool[3]}><div className="number" aria-hidden="true">0{index + 1}</div><p className="eyebrow">{tool[0]}</p><h2>{tool[1]}</h2><p>{tool[2]}</p><a href={tool[3]}>{tool[4]} <span aria-hidden="true">→</span></a></article>)}</section><footer><p>Read-only by design. Sources, freshness, and assumptions stay visible.</p><p>USD · United States</p></footer></main>;
+  return <main><FinanceNav /><section className="hero" aria-labelledby="page-title"><p className="kicker">A clearer household balance sheet</p><h1 id="page-title">Your money, explained.</h1><p className="lede">One private picture of what you own, spend, and grow—plus transparent tools for the two decisions that reshape a lifetime.</p></section><section className="areas" aria-label="Finance tools">{tools.map((tool, index) => <article className="card" key={tool[3]}><div className="number" aria-hidden="true">0{index + 1}</div><p className="eyebrow">{tool[0]}</p><h2>{tool[1]}</h2><p>{tool[2]}</p><a href={tool[3]}>{tool[4]} <span aria-hidden="true">→</span></a></article>)}</section><footer><p>Read-only by design. Sources, freshness, and assumptions stay visible.</p><p>USD · United States</p></footer></main>;
 }
 
 function Slider({ label, value, min, max, step, format, change }: { label: string; value: number; min: number; max: number; step: number; format: (value: number) => string; change: (value: number) => void }) {

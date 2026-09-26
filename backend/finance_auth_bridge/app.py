@@ -495,6 +495,20 @@ def authorize_request(request: Request):
     )
 
 
+@app.get("/oauth2/session")
+def browser_session(request: Request):
+    """Expose only enough state for public navigation and fresh-auth UX."""
+    session = server_state.session(request.cookies.get(SESSION_COOKIE, ""))
+    authenticated = settings.enabled and session is not None
+    fresh = authenticated and (
+        0 <= time.time() - float(session["auth_time"]) <= settings.freshness_seconds
+    )
+    return JSONResponse(
+        {"authenticated": authenticated, "fresh": fresh},
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 @app.post("/oauth2/logout")
 def logout(request: Request):
     _disabled()

@@ -110,6 +110,7 @@ def test_browser_loads_responsive_usd_application_shell(running_service: str):
 
     assert response.status == 200
     assert response.headers["Content-Type"].startswith("text/html")
+    assert response.headers["Cache-Control"] == "no-store"
     assert "Your money, explained." in html
     assert 'href="/housing"' in html
     assert 'href="/retirement"' in html
