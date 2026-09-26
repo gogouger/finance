@@ -30,7 +30,7 @@ services:
       - /opt/data/finance/secrets/plaid-credentials.fernet:/run/secrets/plaid-credentials.fernet:ro
       - /opt/data/finance/keys/plaid-credentials.key:/run/secrets/plaid-credentials.key:ro
     tmpfs:
-      - /tmp:rw,noexec,nosuid,nodev,size=16m
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
     expose:
       - "8080"
     networks:
