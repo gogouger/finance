@@ -269,6 +269,9 @@ def build_accounting_view(
             **adjustments_by_id.get(source_id, {}),
         }
         original = by_id.get(refund_links.get(source_id, ""))
+        category_source = original if original is not None and amount < 0 else source
+        classification = classifications.get(category_source["transaction_id"])
+        primary, detailed = _provider_category(category_source, classification)
         accounting_type = matched_movements.get(source_id)
         if original is not None and amount < 0:
             accounting_type = "refund"
@@ -288,7 +291,9 @@ def build_accounting_view(
             elif amount > 0:
                 accounting_type = "spending"
             elif amount < 0:
-                accounting_type = "income"
+                accounting_type = (
+                    "income" if primary.startswith("INCOME") else "refund"
+                )
             else:
                 accounting_type = "neutral"
 
@@ -306,9 +311,6 @@ def build_accounting_view(
             elif accounting_type == "credit_card_payment":
                 card_payments += -amount
 
-        category_source = original if original is not None and accounting_type == "refund" else source
-        classification = classifications.get(category_source["transaction_id"])
-        primary, detailed = _provider_category(category_source, classification)
         if accounting_type == "spending":
             if pending:
                 provisional_spending += amount

@@ -225,6 +225,43 @@ def test_cross_source_overlap_prefers_plaid_without_collapsing_real_repeats():
     }
 
 
+def test_non_income_depository_credit_offsets_spending_instead_of_becoming_income():
+    rows = [
+        {
+            "transaction_id": "fee",
+            "account_id": "checking",
+            "date": "2026-09-11",
+            "name": "Monthly maintenance fee",
+            "amount": 12,
+            "pending": False,
+            "personal_finance_category": {
+                "primary": "BANK_FEES",
+                "detailed": "BANK_FEES_MONTHLY",
+            },
+        },
+        {
+            "transaction_id": "waiver",
+            "account_id": "checking",
+            "date": "2026-09-11",
+            "name": "Monthly maintenance fee waived",
+            "amount": -12,
+            "pending": False,
+            "personal_finance_category": {
+                "primary": "BANK_FEES",
+                "detailed": "BANK_FEES_MONTHLY",
+            },
+        },
+    ]
+
+    result = build_accounting_view(rows)
+    types = {item["id"]: item["accounting_type"] for item in result["transactions"]}
+
+    assert types == {"fee": "spending", "waiver": "refund"}
+    assert result["metrics"]["income"] == 0
+    assert result["metrics"]["finalized_spending"]["net_of_refunds"] == 0
+    assert result["metrics"]["cash_flow"]["refund_credits"] == 12
+
+
 def _accounting(base_url: str) -> dict:
     with urllib.request.urlopen(
         _request(f"{base_url}/api/private/transactions/accounting", headers=OWNER)
