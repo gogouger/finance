@@ -154,6 +154,7 @@ type ActivitySignal = {
 type DashboardResult = {
   currency: "USD";
   generated_at: string;
+  reporting_period: { label: string; start: string; end: string };
   metrics: DashboardMetric[];
   sections: {
     cash_flow: { inflows: number; outflows: number; net: number };
@@ -821,6 +822,7 @@ function Dashboard() {
           Observed balances and activity—not a generic budget. Every number says
           what it includes, what it leaves out, and how current it is.
         </p>
+        {dashboard && <p className="reporting-period">Activity metrics: {dashboard.reporting_period.label.toLowerCase()} · {dashboard.reporting_period.start} through {dashboard.reporting_period.end}. Balance metrics are current snapshots.</p>}
       </header>
       {error && (
         <p className="dashboard-error" role="alert">
@@ -899,7 +901,7 @@ function Dashboard() {
               </div>
               <div className="flow-compare">
                 <article>
-                  <span>Raw cash flow</span>
+                  <span>Raw cash flow · trailing 12 months</span>
                   <strong>
                     {money.format(dashboard.sections.cash_flow.net)}
                   </strong>
@@ -913,7 +915,7 @@ function Dashboard() {
                   </small>
                 </article>
                 <article>
-                  <span>Adjusted personal spending</span>
+                  <span>Adjusted personal spending · trailing 12 months</span>
                   <strong>
                     {money.format(dashboard.sections.adjusted_spending.value)}
                   </strong>
@@ -932,7 +934,7 @@ function Dashboard() {
                   <small>{dashboard.sections.adjusted_spending.context}</small>
                 </article>
               </div>
-              <h3>Spending by category</h3>
+              <h3>Spending by category · trailing 12 months</h3>
               {Object.keys(dashboard.spending_by_category).length === 0 ? (
                 <p className="quiet">No finalized spending is available.</p>
               ) : (

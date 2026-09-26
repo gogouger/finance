@@ -188,7 +188,7 @@ def test_owner_sees_explainable_metrics_from_normalized_records(
     ]
 
 
-def test_unusual_activity_is_a_review_signal_not_a_fraud_claim(
+def test_expected_recurring_costs_are_not_mislabelled_as_unusual(
     dashboard_service: str,
 ):
     fresh_owner = {**OWNER, "X-Auth-Time": str(time.time())}
@@ -217,17 +217,17 @@ def test_unusual_activity_is_a_review_signal_not_a_fraud_claim(
     dashboard = _json(
         _request(f"{dashboard_service}/api/private/dashboard", headers=OWNER)
     )
-    charge_signals = [
+    recurring_charge_signals = [
         item
         for item in dashboard["unusual_activity"]
-        if item["type"] == "unusual_charge"
+        if item.get("merchant_name")
+        in {"Douglas County Treasurer", "Home Shield Insurance"}
     ]
 
-    assert charge_signals
-    assert {item["amount"] for item in charge_signals} == {1200}
-    assert all(item["review_required"] is True for item in charge_signals)
-    assert all(item["confidence"]["level"] == "medium" for item in charge_signals)
-    assert all("does not establish fraud" in item["confidence"]["rationale"] for item in charge_signals)
+    assert recurring_charge_signals == []
+    assert "four earlier merchant-specific observations" in dashboard[
+        "unusual_activity_method"
+    ]["limitations"]
     assert "not fraud determinations" in dashboard["unusual_activity_method"][
         "limitations"
     ]
@@ -276,6 +276,10 @@ def test_spending_analytics_separates_payments_and_builds_time_views(
         "period": "2026",
         "net_spending": 302,
     }
+    assert analytics["yearly"][0]["year"] == 2026
+    assert analytics["yearly"][0]["net_spending"] == 302
+    assert analytics["yearly"][0]["months_covered"] == 1
+    assert analytics["yearly"][0]["complete_year"] is False
     assert analytics["liabilities"][0]["last_statement_balance"] == 180
     assert analytics["liabilities"][0]["next_payment_due_date"] == "2026-10-02"
     assert isinstance(analytics["anomalies"], list)

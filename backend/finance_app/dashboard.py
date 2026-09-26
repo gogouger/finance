@@ -1,4 +1,5 @@
-from datetime import UTC, datetime
+from collections import defaultdict
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from statistics import median
 
@@ -65,6 +66,11 @@ def _coverage(covered: int, total: int, sources: list[str]) -> dict:
     }
 
 
+def _shift_months(value: date, months: int) -> date:
+    index = value.year * 12 + value.month - 1 + months
+    return date(index // 12, index % 12 + 1, 1)
+
+
 def _metric(
     key: str,
     label: str,
@@ -102,34 +108,52 @@ def _unusual_activity(accounting: dict, balance_history: dict[str, list[dict]]) 
         for item in accounting["transactions"]
         if item["accounting_type"] == "spending" and item["status"] == "posted"
     ]
-    typical = median([item["amount"] for item in spending]) if spending else 0
-    threshold = max(500, typical * 3)
-    signals = [
-        {
-            "type": "unusual_charge",
-            "title": "Charge is larger than recent typical spending",
-            "amount": item["amount"],
-            "date": item["date"],
-            "merchant_name": item["merchant_name"],
-            "explanation": (
-                f"This posted charge is at least ${threshold:,.0f}, the larger of "
-                "$500 or three times the median posted purchase in available history."
-            ),
-            "confidence": {
-                "level": "medium",
-                "rationale": "A deterministic size rule identified the charge; it does not establish fraud or error.",
-            },
-            "review_required": True,
-        }
-        for item in spending
-        if item["amount"] >= threshold
-    ]
+    latest = max(
+        (date.fromisoformat(item["date"]) for item in spending), default=date.today()
+    )
+    recent_cutoff = latest - timedelta(days=60)
+    histories: dict[str, list[dict]] = defaultdict(list)
+    for item in spending:
+        histories[str(item.get("merchant_name") or "").casefold()].append(item)
+    signals = []
+    for item in spending:
+        if date.fromisoformat(item["date"]) < recent_cutoff:
+            continue
+        prior = [
+            row["amount"]
+            for row in histories[str(item.get("merchant_name") or "").casefold()]
+            if row["date"] < item["date"] and row["amount"] > 0
+        ]
+        if len(prior) < 4:
+            continue
+        typical = median(prior)
+        threshold = max(250, typical * 3)
+        if item["amount"] < threshold or item["amount"] - typical < 200:
+            continue
+        signals.append(
+            {
+                "type": "merchant_deviation",
+                "title": "Charge is higher than this merchant's usual amount",
+                "amount": item["amount"],
+                "date": item["date"],
+                "merchant_name": item["merchant_name"],
+                "explanation": (
+                    f"Compared with the median of {len(prior)} earlier charges "
+                    "at this same merchant."
+                ),
+                "confidence": {
+                    "level": "medium",
+                    "rationale": "The merchant has enough prior history for comparison; this is still only a review prompt.",
+                },
+                "review_required": True,
+            }
+        )
     for account_key, observations in balance_history.items():
         if len(observations) < 2:
             continue
         previous, current = observations[-2:]
         change = float(current.get("current") or 0) - float(previous.get("current") or 0)
-        material = max(500, abs(float(previous.get("current") or 0)) * 0.1)
+        material = max(5000, abs(float(previous.get("current") or 0)) * 0.25)
         if abs(change) < material:
             continue
         signals.append(
@@ -140,7 +164,7 @@ def _unusual_activity(accounting: dict, balance_history: dict[str, list[dict]]) 
                 "date": str(current.get("observed_at", ""))[:10] or None,
                 "account_reference": account_key.split(":", 1)[-1],
                 "explanation": (
-                    "The latest balance differs by at least $500 or 10% from the prior observation."
+                    "The latest balance differs by at least $5,000 or 25% from the prior observation."
                 ),
                 "confidence": {
                     "level": "medium",
@@ -149,7 +173,9 @@ def _unusual_activity(accounting: dict, balance_history: dict[str, list[dict]]) 
                 "review_required": True,
             }
         )
-    return sorted(signals, key=lambda item: (item.get("date") or "", item["type"]), reverse=True)
+    return sorted(
+        signals, key=lambda item: (item.get("date") or "", item["type"]), reverse=True
+    )[:8]
 
 
 @router.get("/api/private/dashboard")
@@ -162,16 +188,37 @@ def financial_dashboard(request: Request) -> dict:
     assets = _active(storage, owner, "household_asset")
     holdings = _active(storage, owner, "holding")
     transactions = storage.list_financial_records(owner, "transaction")
-    accounting = build_accounting_view(
+    classifications = effective_classifications(storage, owner)
+    credit_account_ids = {
+        item["account_id"] for item in accounts if item.get("type") == "credit"
+    }
+    full_accounting = build_accounting_view(
         transactions,
         storage.list_transaction_adjustments(owner),
         storage.list_provider_record_versions(owner, "transaction"),
-        effective_classifications(storage, owner),
-        {
-            item["account_id"]
-            for item in accounts
-            if item.get("type") == "credit"
-        },
+        classifications,
+        credit_account_ids,
+    )
+    latest_transaction_date = max(
+        (
+            date.fromisoformat(item["date"])
+            for item in transactions
+            if not item.get("removed") and item.get("date")
+        ),
+        default=date.today(),
+    )
+    reporting_start = _shift_months(latest_transaction_date, -11)
+    period_transactions = [
+        item
+        for item in transactions
+        if item.get("date") and date.fromisoformat(item["date"]) >= reporting_start
+    ]
+    accounting = build_accounting_view(
+        period_transactions,
+        storage.list_transaction_adjustments(owner),
+        storage.list_provider_record_versions(owner, "transaction"),
+        classifications,
+        credit_account_ids,
     )
     obligations = [
         item
@@ -233,10 +280,10 @@ def financial_dashboard(request: Request) -> dict:
         _metric("net_worth", "Net worth", net_worth, "Cash, investments, and registered household assets minus known debts.", inclusions=["latest depository balances", "latest investment balances", "registered home and vehicle values", "credit-card balances", "registered asset debt"], exclusions=["selling costs", "unregistered assets", "unavailable loan liabilities"], timestamps=[*balance_times, *asset_times], gaps=liability_gap, confidence="medium", rationale="Connected balances and registered asset values are included; other loan liabilities may be incomplete.", covered=len(balances) + len(assets), total=len(accounts) + len(assets), sources=balance_sources),
         _metric("cash", "Cash", cash, "Latest current balances for connected depository accounts.", inclusions=["checking", "savings", "other depository accounts"], exclusions=["credit available", "investment cash inside brokerage accounts"], timestamps=[balance.get("observed_at", "") for _, balance in cash_rows], gaps=[] if cash_rows else ["No connected depository balances are available."], confidence="high" if cash_rows else "low", rationale="Computed from latest USD provider balance observations.", covered=len(cash_rows), total=len([item for item in accounts if item.get("type") == "depository"]), sources=transaction_sources),
         _metric("debt", "Known debt", debt, "Positive connected credit-card balances plus debt registered against household assets.", inclusions=["credit-card balances", "registered mortgage and vehicle debt"], exclusions=["unavailable student, personal, and other provider loan liabilities"], timestamps=[*balance_times, *asset_times], gaps=liability_gap, confidence="medium", rationale="Known balances are exact to their sources, but liability-source coverage is incomplete.", covered=len(credit_rows) + len([item for item in assets if item["ownership"]["debt_balance"] > 0]), total=len(credit_rows) + len([item for item in assets if item["ownership"]["debt_balance"] > 0]) + 1, sources=balance_sources),
-        _metric("income", "Current income", accounting_metrics["income"], "Posted transaction inflows classified as income in available history.", inclusions=["posted income transactions"], exclusions=["transfers", "refunds", "pending income", "unconnected payroll history"], timestamps=transaction_times, gaps=[], confidence="medium", rationale="Provider transaction categories are used until the owner reviews classifications.", covered=len(transaction_sources), total=len(transaction_sources), sources=transaction_sources),
-        _metric("raw_cash_flow", "Raw cash flow", accounting_metrics["cash_flow"]["net"], "All posted cash inflows minus all posted cash outflows, including transfers and card payments.", inclusions=["posted inflows", "posted outflows", "transfers", "credit-card payments"], exclusions=["pending transactions"], timestamps=transaction_times, gaps=[], confidence="high", rationale="Cash movement is taken directly from posted normalized transactions.", covered=len(transaction_sources), total=len(transaction_sources), sources=transaction_sources),
-        _metric("raw_spending", "Raw spending", accounting_metrics["finalized_spending"]["raw"], "Posted purchase outflows before refunds or owner adjustments.", inclusions=["posted purchases"], exclusions=["income", "transfers", "credit-card payments", "pending transactions", "refund offsets"], timestamps=transaction_times, gaps=[], confidence="high", rationale="Deterministic accounting rules separate purchases from non-spending movements.", covered=len(transaction_sources), total=len(transaction_sources), sources=transaction_sources),
-        _metric("adjusted_personal_spending", "Adjusted personal spending", accounting_metrics["finalized_spending"]["adjusted"], "Posted personal purchase spending after refunds and owner adjustments.", inclusions=["posted personal purchases", "linked refunds", "owner-confirmed personal shares"], exclusions=["transfers", "card payments", "pending purchases", "reimbursable, business, and excluded shares"], timestamps=transaction_times, gaps=[], confidence="high", rationale="Uses normalized accounting plus explicit owner adjustments; unreviewed provider categories remain visible separately.", covered=len(transaction_sources), total=len(transaction_sources), sources=transaction_sources),
+        _metric("income", "Income · trailing 12 months", accounting_metrics["income"], "Posted transaction inflows classified as income during the trailing 12 calendar months.", inclusions=["posted income transactions in the reporting period"], exclusions=["older history", "transfers", "refunds", "pending income", "unconnected payroll history"], timestamps=transaction_times, gaps=[], confidence="medium", rationale="Provider transaction categories are used until the owner reviews classifications.", covered=len(transaction_sources), total=len(transaction_sources), sources=transaction_sources),
+        _metric("raw_cash_flow", "Cash flow · trailing 12 months", accounting_metrics["cash_flow"]["net"], "Posted cash inflows minus posted cash outflows during the trailing 12 calendar months, including transfers and card payments.", inclusions=["posted inflows", "posted outflows", "transfers", "credit-card payments"], exclusions=["older history", "pending transactions"], timestamps=transaction_times, gaps=[], confidence="high", rationale="Cash movement is taken directly from posted normalized transactions.", covered=len(transaction_sources), total=len(transaction_sources), sources=transaction_sources),
+        _metric("raw_spending", "Raw spending · trailing 12 months", accounting_metrics["finalized_spending"]["raw"], "Posted purchase outflows during the trailing 12 calendar months before refunds or owner adjustments.", inclusions=["posted purchases in the reporting period"], exclusions=["older history", "income", "transfers", "credit-card payments", "pending transactions", "refund offsets"], timestamps=transaction_times, gaps=[], confidence="high", rationale="Deterministic accounting rules separate purchases from non-spending movements.", covered=len(transaction_sources), total=len(transaction_sources), sources=transaction_sources),
+        _metric("adjusted_personal_spending", "Personal spending · trailing 12 months", accounting_metrics["finalized_spending"]["adjusted"], "Posted personal purchase spending during the trailing 12 calendar months after refunds and owner adjustments.", inclusions=["posted personal purchases", "linked refunds", "owner-confirmed personal shares"], exclusions=["older history", "transfers", "card payments", "pending purchases", "reimbursable, business, and excluded shares"], timestamps=transaction_times, gaps=[], confidence="high", rationale="Uses normalized accounting plus explicit owner adjustments; unreviewed provider categories remain visible separately.", covered=len(transaction_sources), total=len(transaction_sources), sources=transaction_sources),
         _metric("true_monthly_cost", "True monthly cost", true_monthly_cost, "Monthly equivalent of owner-confirmed recurring, quarterly, and annual obligations.", inclusions=["confirmed recurring obligations"], exclusions=["unconfirmed recurring proposals", "one-off spending"], timestamps=[item.get("updated_at", "") for item in obligations], gaps=missing_recurring, confidence="high" if obligations else "low", rationale="Only owner-confirmed obligations affect this metric.", covered=len(obligations), total=max(1, len(obligations)), sources=["confirmed recurring-cost records"] if obligations else []),
         _metric("credit_card_liabilities", "Credit-card liabilities", credit_debt, "Latest positive current balances on connected credit-card accounts.", inclusions=["connected credit-card current balances"], exclusions=["available credit", "pending charges", "unconnected cards"], timestamps=[balance.get("observed_at", "") for _, balance in credit_rows], gaps=[] if credit_rows else ["No connected credit-card balance is available."], confidence="high" if credit_rows else "low", rationale="Computed from latest USD provider balance observations.", covered=len(credit_rows), total=len([item for item in accounts if item.get("type") == "credit"]), sources=transaction_sources),
         _metric("investment_value", "Investment value", investment_value, "Latest connected investment-account balances, falling back to normalized holdings when balances are absent.", inclusions=["brokerage and retirement investment accounts"], exclusions=["unconnected accounts", "cost basis as a substitute for market value"], timestamps=balance_times, gaps=[] if investment_rows or holdings else ["No investment balances or holdings are available."], confidence="high" if investment_rows else ("medium" if holdings else "low"), rationale="Uses provider market values without inferring missing positions.", covered=len(investment_rows) or len(holdings), total=max(len(investment_rows), len(holdings), 1), sources=transaction_sources),
@@ -249,6 +296,11 @@ def financial_dashboard(request: Request) -> dict:
     return {
         "currency": "USD",
         "generated_at": datetime.now(UTC).isoformat(),
+        "reporting_period": {
+            "label": "Trailing 12 months",
+            "start": reporting_start.isoformat(),
+            "end": latest_transaction_date.isoformat(),
+        },
         "metrics": metrics,
         "sections": {
             "cash_flow": accounting_metrics["cash_flow"],
@@ -260,9 +312,9 @@ def financial_dashboard(request: Request) -> dict:
             },
         },
         "spending_by_category": accounting_metrics["spending_by_category"],
-        "unusual_activity": _unusual_activity(accounting, balance_history),
+        "unusual_activity": _unusual_activity(full_accounting, balance_history),
         "unusual_activity_method": {
-            "definition": "Rule-based review signals for large posted charges and material balance changes.",
-            "limitations": "Signals are not fraud determinations and can be legitimate. Empty results do not prove that all activity is expected.",
+            "definition": "Recent charges are compared with earlier charges at the same merchant; balance changes use a high materiality threshold.",
+            "limitations": "A charge needs at least four earlier merchant-specific observations before it can be flagged. Signals are not fraud determinations.",
         },
     }

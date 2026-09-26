@@ -16,6 +16,18 @@ const dateLabel = (value?: string) =>
     : "Unavailable";
 
 type PeriodRow = { period: string; net_spending: number };
+type YearlyRow = {
+  year: number;
+  net_spending: number;
+  raw_spending: number;
+  refunds: number;
+  card_payments: number;
+  transaction_count: number;
+  months_covered: number;
+  average_per_observed_month: number;
+  annualized_pace: number;
+  complete_year: boolean;
+};
 type MonthRow = {
   month: string;
   net_spending: number;
@@ -80,6 +92,7 @@ type SpendingResult = {
   monthly: MonthRow[];
   quarterly: PeriodRow[];
   annual: PeriodRow[];
+  yearly: YearlyRow[];
   categories: CategoryRow[];
   merchants: MerchantRow[];
   transactions: TransactionRow[];
@@ -276,6 +289,7 @@ export function SpendingAnalytics() {
     1,
     ...data.categories.map((row) => row.net_spending),
   );
+  const periodLabel = months === 0 ? "All available history" : `Trailing ${months} months`;
   return (
     <section className="analytics-shell" aria-labelledby="spending-title">
       <div className="analytics-heading">
@@ -303,7 +317,7 @@ export function SpendingAnalytics() {
       </div>
       <div className="spending-summary">
         <article>
-          <span>Net spending</span>
+          <span>Net spending · {periodLabel}</span>
           <strong>{money.format(data.summary.net_spending)}</strong>
           <small>
             {dateLabel(data.period.start || undefined)}–
@@ -387,7 +401,7 @@ export function SpendingAnalytics() {
           <div className="section-title">
             <div>
               <p className="eyebrow">Longer cycles</p>
-              <h2>Quarterly and annual</h2>
+              <h2>Quarterly detail</h2>
             </div>
           </div>
           <div className="period-columns">
@@ -400,18 +414,38 @@ export function SpendingAnalytics() {
                 </p>
               ))}
             </div>
-            <div>
-              <h3>Annual</h3>
-              {data.annual.map((row) => (
-                <p key={row.period}>
-                  <span>{row.period}</span>
-                  <strong>{money.format(row.net_spending)}</strong>
-                </p>
-              ))}
+            <div className="period-explainer">
+              <h3>How to read it</h3>
+              <p>Each quarter uses only purchases posted in the selected period, after refunds.</p>
+              <p>Full calendar-year comparisons are shown below with coverage, so partial years do not masquerade as complete ones.</p>
             </div>
           </div>
         </article>
       </div>
+      <article className="analytics-card yearly-card">
+        <div className="section-title">
+          <div>
+            <p className="eyebrow">Calendar-year context</p>
+            <h2>What each year actually represents</h2>
+          </div>
+          <span>All imported history</span>
+        </div>
+        <div className="yearly-grid">
+          {data.yearly.map((row) => (
+            <article key={row.year}>
+              <div><strong>{row.year}</strong><span>{row.complete_year ? "Complete year" : `${row.months_covered} months imported`}</span></div>
+              <b>{money.format(row.net_spending)} <small>net spending</small></b>
+              <dl>
+                <div><dt>Average / observed month</dt><dd>{money.format(row.average_per_observed_month)}</dd></div>
+                <div><dt>Refunds</dt><dd>{money.format(row.refunds)}</dd></div>
+                <div><dt>Card payments excluded</dt><dd>{money.format(row.card_payments)}</dd></div>
+                <div><dt>Transactions</dt><dd>{row.transaction_count}</dd></div>
+              </dl>
+              {!row.complete_year && <p>At this pace: {money.format(row.annualized_pace)} over 12 months. This is context, not a forecast.</p>}
+            </article>
+          ))}
+        </div>
+      </article>
       <div className="analytics-grid">
         <article className="analytics-card">
           <div className="section-title">

@@ -1,7 +1,6 @@
-import calendar
 import re
 from collections import Counter, defaultdict
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from statistics import median
 
@@ -75,6 +74,54 @@ def _quarter(value: str) -> str:
     return f"{parsed.year}-Q{(parsed.month - 1) // 3 + 1}"
 
 
+def _yearly_metrics(rows: list[dict], latest: date) -> list[dict]:
+    buckets: dict[str, dict] = defaultdict(
+        lambda: {
+            "raw_spending": Decimal("0"),
+            "refunds": Decimal("0"),
+            "net_spending": Decimal("0"),
+            "card_payments": Decimal("0"),
+            "transaction_count": 0,
+            "months": set(),
+        }
+    )
+    for item in rows:
+        if item["status"] != "posted":
+            continue
+        bucket = buckets[item["date"][:4]]
+        bucket["transaction_count"] += 1
+        bucket["months"].add(item["date"][:7])
+        amount = Decimal(str(item["amount"]))
+        if item["accounting_type"] == "credit_card_payment":
+            bucket["card_payments"] += abs(amount)
+        elif item["accounting_type"] == "spending":
+            bucket["raw_spending"] += amount
+            bucket["net_spending"] += amount
+        elif item["accounting_type"] == "refund":
+            bucket["refunds"] += abs(amount)
+            bucket["net_spending"] += amount
+
+    result = []
+    for year, bucket in sorted(buckets.items(), reverse=True):
+        months_covered = len(bucket["months"])
+        average = bucket["net_spending"] / Decimal(max(1, months_covered))
+        result.append(
+            {
+                "year": int(year),
+                "net_spending": _money(bucket["net_spending"]),
+                "raw_spending": _money(bucket["raw_spending"]),
+                "refunds": _money(bucket["refunds"]),
+                "card_payments": _money(bucket["card_payments"]),
+                "transaction_count": bucket["transaction_count"],
+                "months_covered": months_covered,
+                "average_per_observed_month": _money(average),
+                "annualized_pace": _money(average * Decimal("12")),
+                "complete_year": months_covered == 12 and int(year) < latest.year,
+            }
+        )
+    return result
+
+
 def _classification_summary(storage, owner: str, transactions: list[dict]) -> dict:
     effective = effective_classifications(storage, owner)
     uncertain = []
@@ -108,30 +155,58 @@ def _classification_summary(storage, owner: str, transactions: list[dict]) -> di
 
 def _anomalies(rows: list[dict], monthly_by_category: dict[str, dict[str, Decimal]]) -> list[dict]:
     spending = [item for item in rows if item["accounting_type"] == "spending"]
-    amounts = [item["amount"] for item in spending if item["amount"] > 0]
-    threshold = max(500, median(amounts) * 4 if amounts else 500)
-    results = [
-        {
-            "type": "large_charge",
-            "title": "Large charge",
-            "merchant_name": _merchant(item["merchant_name"]),
-            "date": item["date"],
-            "amount": item["amount"],
-            "explanation": f"At least ${threshold:,.0f}, based on four times the median purchase or $500.",
-        }
-        for item in spending
-        if item["amount"] >= threshold
-    ]
+    latest_date = max(
+        (date.fromisoformat(item["date"]) for item in spending), default=date.today()
+    )
+    recent_cutoff = latest_date - timedelta(days=60)
+    merchant_history: dict[str, list[dict]] = defaultdict(list)
+    for item in spending:
+        merchant_history[item["merchant_name"].casefold()].append(item)
+
+    results = []
+    for item in spending:
+        item_date = date.fromisoformat(item["date"])
+        if item_date < recent_cutoff:
+            continue
+        prior = [
+            row["amount"]
+            for row in merchant_history[item["merchant_name"].casefold()]
+            if row["date"] < item["date"] and row["amount"] > 0
+        ]
+        if len(prior) < 4:
+            continue
+        typical = Decimal(str(median(prior)))
+        amount = Decimal(str(item["amount"]))
+        threshold = max(Decimal("250"), typical * Decimal("3"))
+        if amount < threshold or amount - typical < Decimal("200"):
+            continue
+        results.append(
+            {
+                "type": "merchant_deviation",
+                "title": "Higher than this merchant's usual charge",
+                "merchant_name": _merchant(item["merchant_name"]),
+                "date": item["date"],
+                "amount": item["amount"],
+                "explanation": (
+                    f"This is ${_money(amount - typical):,.0f} above the median of "
+                    f"{len(prior)} earlier charges at this merchant."
+                ),
+            }
+        )
     months = sorted(monthly_by_category)
     if len(months) >= 4:
         latest = months[-2] if date.fromisoformat(f"{months[-1]}-01") == _month_start(date.today()) else months[-1]
-        prior = [month for month in months if month < latest][-3:]
+        prior = [month for month in months if month < latest][-6:]
         for category, amount in monthly_by_category[latest].items():
-            baseline = sum(
-                (monthly_by_category[month].get(category, Decimal("0")) for month in prior),
-                Decimal("0"),
-            ) / Decimal(max(1, len(prior)))
-            if amount >= Decimal("250") and amount >= max(Decimal("1"), baseline * 2):
+            history = [
+                monthly_by_category[month].get(category, Decimal("0"))
+                for month in prior
+                if monthly_by_category[month].get(category, Decimal("0")) > 0
+            ]
+            if len(history) < 4:
+                continue
+            baseline = Decimal(str(median(history)))
+            if amount >= baseline * Decimal("2") and amount - baseline >= Decimal("500"):
                 results.append(
                     {
                         "type": "category_spike",
@@ -139,12 +214,14 @@ def _anomalies(rows: list[dict], monthly_by_category: dict[str, dict[str, Decima
                         "merchant_name": category.replace("_", " ").title(),
                         "date": f"{latest}-01",
                         "amount": _money(amount),
-                        "explanation": f"More than twice the prior three-month average of ${_money(baseline):,.0f}.",
+                        "explanation": f"More than twice the median of six prior active months (${_money(baseline):,.0f}).",
                     }
                 )
+    duplicate_cutoff = latest_date - timedelta(days=90)
     duplicates = Counter(
         (item["date"], item["merchant_name"].casefold(), item["amount"])
         for item in spending
+        if date.fromisoformat(item["date"]) >= duplicate_cutoff
     )
     for (transaction_date, merchant_name, amount), count in duplicates.items():
         if count > 1:
@@ -158,7 +235,9 @@ def _anomalies(rows: list[dict], monthly_by_category: dict[str, dict[str, Decima
                     "explanation": f"{count} posted charges share the same date, merchant, and amount.",
                 }
             )
-    return sorted(results, key=lambda item: (item["date"], abs(item["amount"])), reverse=True)[:30]
+    return sorted(
+        results, key=lambda item: (item["date"], abs(item["amount"])), reverse=True
+    )[:8]
 
 
 @router.get("/api/private/spending/analytics")
@@ -195,6 +274,11 @@ def spending_analytics(
         {**item, "merchant_name": _merchant(item["merchant_name"])}
         for item in accounting["transactions"]
         if date.fromisoformat(item["date"]) >= start and item["status"] == "posted"
+    ]
+    all_posted_rows = [
+        {**item, "merchant_name": _merchant(item["merchant_name"])}
+        for item in accounting["transactions"]
+        if item["status"] == "posted"
     ]
 
     monthly: dict[str, dict[str, Decimal]] = defaultdict(
@@ -278,6 +362,7 @@ def spending_analytics(
             {"period": key, "net_spending": _money(value)}
             for key, value in sorted(annual.items())
         ],
+        "yearly": _yearly_metrics(all_posted_rows, latest),
         "categories": [
             {"category": key, "net_spending": _money(value)}
             for key, value in sorted(
