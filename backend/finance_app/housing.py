@@ -440,6 +440,16 @@ def calculate_housing(inputs: HousingInputs) -> dict:
     result = {
         "currency": "USD",
         "monthly_mortgage_payment": _money(mortgage_payment),
+        "initial_cash_allocation": {
+            "shared_starting_cash": _money(
+                inputs.down_payment + buy_closing_cost + origination_cash
+            ),
+            "buyer_down_payment_to_home": _money(inputs.down_payment),
+            "buyer_purchase_costs": _money(buy_closing_cost + origination_cash),
+            "renter_starting_investment": _money(
+                inputs.down_payment + buy_closing_cost + origination_cash
+            ),
+        },
         "financing": {
             "loan_type": inputs.loan_type,
             "base_loan_amount": _money(base_loan_amount),

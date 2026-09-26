@@ -64,6 +64,25 @@ def test_conventional_financing_includes_points_fees_pmi_and_extra_principal():
     assert paid_off["years"][0]["buyer_housing_cash_paid"] == 100_000
 
 
+def test_down_payment_is_home_equity_for_buyer_and_invested_for_renter():
+    result = calculate_housing(
+        _inputs(
+            down_payment=25_000,
+            buy_closing_cost_percent=2,
+            lender_fees=500,
+        )
+    )
+
+    assert result["initial_cash_allocation"] == {
+        "shared_starting_cash": 27_500,
+        "buyer_down_payment_to_home": 25_000,
+        "buyer_purchase_costs": 2_500,
+        "renter_starting_investment": 27_500,
+    }
+    assert result["years"][0]["buyer_principal_contributed"] == 27_500
+    assert result["years"][0]["renter_net_contributions"] == 30_000
+
+
 def test_fha_and_va_apply_distinct_configurable_funding_and_insurance_costs():
     fha = calculate_housing(
         _inputs(loan_type="fha", down_payment=3_500, pmi_annual_percent=0.55)

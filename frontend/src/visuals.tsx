@@ -19,6 +19,13 @@ type HousingYear = {
   buyer_advantage: number;
 };
 
+type InitialCashAllocation = {
+  shared_starting_cash: number;
+  buyer_down_payment_to_home: number;
+  buyer_purchase_costs: number;
+  renter_starting_investment: number;
+};
+
 type RetirementYear = {
   age: number;
   phase: "working" | "retired";
@@ -92,13 +99,18 @@ function Composition({ pieces }: { pieces: { label: string; value: number; color
   </div>;
 }
 
-export function HousingVisuals({ years }: { years: HousingYear[] }) {
+export function HousingVisuals({ years, initialCash }: { years: HousingYear[]; initialCash: InitialCashAllocation }) {
   const [selected, setSelected] = useState(years.length - 1);
   const index = Math.min(selected, years.length - 1);
   const row = years[index];
   const crossover = years.find((year) => year.buyer_advantage >= 0)?.year;
   if (!row) return null;
   return <section className="visual-story" aria-label="Housing projection explained visually">
+    <div className="starting-cash">
+      <div className="starting-cash-heading"><p className="eyebrow">Day one · equal starting cash</p><h3>{money.format(initialCash.shared_starting_cash)} takes two different paths</h3><p>The down payment is not treated as money that disappears. It becomes home equity for the buyer and remains available to invest for the renter.</p></div>
+      <article><span>Buy</span><strong>{money.format(initialCash.buyer_down_payment_to_home)}</strong><p>Down payment moved into the house as equity.</p>{initialCash.buyer_purchase_costs > 0 && <small>Plus {money.format(initialCash.buyer_purchase_costs)} of purchase costs.</small>}</article>
+      <article><span>Rent + invest</span><strong>{money.format(initialCash.renter_starting_investment)}</strong><p>The avoided down payment and purchase costs are invested on day one.</p></article>
+    </div>
     <div className="story-heading"><div><p className="eyebrow">The race over time</p><h3>Wealth after moving out</h3></div><p>Both lines are net of the costs needed to exit the position. The gap—not the home price—is the useful comparison.</p></div>
     <LineChart rows={years} x={(year) => year.year} label="Buyer net wealth and renter investment wealth over time" series={[
       { label: "Buy: equity after sale", color: "#83d7ad", value: (year) => year.buyer_net_wealth },
@@ -113,7 +125,7 @@ export function HousingVisuals({ years }: { years: HousingYear[] }) {
         { label: "Unrecoverable costs", value: row.buyer_unrecoverable_cost, color: "#815d58", note: "Interest, tax, upkeep, insurance and transaction costs" },
       ]} /></article>
       <article><p className="eyebrow">Rent + invest path</p><h4>{money.format(row.renter_investments)} invested</h4><Composition pieces={[
-        { label: "Money contributed", value: row.renter_net_contributions, color: "#d6a866", note: "Avoided upfront and monthly ownership cash" },
+        { label: "Money contributed", value: row.renter_net_contributions, color: "#d6a866", note: "Starts with the avoided down payment and purchase costs, then adds the monthly difference" },
         { label: "Investment growth", value: row.renter_investment_growth, color: "#a77b3d", note: "Net of the assumed tax drag" },
         { label: "Unrecoverable rent", value: row.renter_unrecoverable_cost, color: "#815d58", note: "Rent and renter utilities paid" },
       ]} /></article>

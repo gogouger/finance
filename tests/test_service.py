@@ -153,6 +153,12 @@ def test_housing_compares_buying_with_renting_and_investing_the_difference(
     assert response.status == 200
     assert body["currency"] == "USD"
     assert body["monthly_mortgage_payment"] == 300
+    assert body["initial_cash_allocation"] == {
+        "shared_starting_cash": 12000,
+        "buyer_down_payment_to_home": 12000,
+        "buyer_purchase_costs": 0,
+        "renter_starting_investment": 12000,
+    }
     assert body["years"] == [
         {
             "year": 1,
