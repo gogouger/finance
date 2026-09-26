@@ -38,6 +38,9 @@ class PlaidProvider:
     def transactions_sync(self, access_token: str, cursor: str | None) -> dict[str, Any]:
         raise NotImplementedError
 
+    def liabilities_get(self, access_token: str) -> dict[str, Any]:
+        raise NotImplementedError
+
     def investments_holdings_get(self, access_token: str) -> dict[str, Any]:
         raise NotImplementedError
 
@@ -229,6 +232,34 @@ class FakePlaidProvider(PlaidProvider):
             return {"added": [{"transaction_id": "transaction-2", "account_id": "account-checking", "date": "2026-09-21", "name": "Paycheck", "amount": -2000.0, "pending": False, "iso_currency_code": "USD"}], "modified": [], "removed": [], "next_cursor": "done", "has_more": False}
         return {"added": [], "modified": [], "removed": [], "next_cursor": cursor or "done", "has_more": False}
 
+    def liabilities_get(self, access_token: str) -> dict[str, Any]:
+        if "accounting" not in access_token:
+            return {"liabilities": {"credit": []}}
+        return {
+            "liabilities": {
+                "credit": [
+                    {
+                        "account_id": "credit",
+                        "is_overdue": False,
+                        "last_payment_amount": 200.0,
+                        "last_payment_date": "2026-09-22",
+                        "last_statement_balance": 180.0,
+                        "last_statement_issue_date": "2026-09-07",
+                        "minimum_payment_amount": 0.0,
+                        "next_payment_due_date": "2026-10-02",
+                        "aprs": [
+                            {
+                                "apr_percentage": 19.99,
+                                "apr_type": "purchase_apr",
+                                "balance_subject_to_apr": 0.0,
+                                "interest_charge_amount": 0.0,
+                            }
+                        ],
+                    }
+                ]
+            }
+        }
+
     def investments_holdings_get(self, access_token: str) -> dict[str, Any]:
         return {
             "securities": [
@@ -396,6 +427,9 @@ class UnconfiguredPlaidProvider(PlaidProvider):
     def transactions_sync(self, access_token: str, cursor: str | None) -> dict[str, Any]:
         self._missing()
 
+    def liabilities_get(self, access_token: str) -> dict[str, Any]:
+        self._missing()
+
     def investments_holdings_get(self, access_token: str) -> dict[str, Any]:
         self._missing()
 
@@ -511,6 +545,9 @@ class HttpPlaidProvider(PlaidProvider):
         if cursor:
             payload["cursor"] = cursor
         return self._post("/transactions/sync", payload)
+
+    def liabilities_get(self, access_token: str) -> dict[str, Any]:
+        return self._post("/liabilities/get", {"access_token": access_token})
 
     def investments_holdings_get(self, access_token: str) -> dict[str, Any]:
         return self._post("/investments/holdings/get", {"access_token": access_token})

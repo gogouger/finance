@@ -30,11 +30,15 @@ def _money(value: Decimal | float | int) -> float:
     return float(Decimal(str(value)).quantize(CENT, rounding=ROUND_HALF_UP))
 
 
-def _provider_category(transaction: dict) -> tuple[str, str]:
-    category = transaction.get("personal_finance_category") or {}
-    return category.get("primary", "UNCATEGORIZED"), category.get(
-        "detailed", "UNCATEGORIZED"
-    )
+def _provider_category(
+    transaction: dict, classification: dict | None = None
+) -> tuple[str, str]:
+    category = (classification or {}).get("category") or transaction.get(
+        "personal_finance_category"
+    ) or {}
+    return str(category.get("primary", "UNCATEGORIZED")).upper(), str(
+        category.get("detailed", "UNCATEGORIZED")
+    ).upper()
 
 
 def _is_transfer(transaction: dict) -> bool:
@@ -95,7 +99,9 @@ def _refund_links(transactions: list[dict]) -> dict[str, str]:
         if explicit_id in by_id:
             links[refund["transaction_id"]] = explicit_id
             continue
-        merchant = (refund.get("merchant_name") or "").strip().casefold()
+        merchant = (
+            refund.get("merchant_name") or refund.get("name") or ""
+        ).strip().casefold()
         if not merchant:
             continue
         refund_date = date.fromisoformat(refund["date"])
@@ -104,7 +110,10 @@ def _refund_links(transactions: list[dict]) -> dict[str, str]:
             for purchase in transactions
             if not purchase.get("pending")
             and Decimal(str(purchase.get("amount", 0))) == -amount
-            and (purchase.get("merchant_name") or "").strip().casefold() == merchant
+            and (
+                purchase.get("merchant_name") or purchase.get("name") or ""
+            ).strip().casefold()
+            == merchant
             and 0
             <= (refund_date - date.fromisoformat(purchase["date"])).days
             <= 90
@@ -130,6 +139,8 @@ def build_accounting_view(
     transactions: list[dict],
     adjustments: list[dict] | None = None,
     provider_versions: list[dict] | None = None,
+    classifications: dict[str, dict] | None = None,
+    credit_account_ids: set[str] | None = None,
 ) -> dict:
     active = [item for item in transactions if not item.get("removed")]
     replaced_pending_ids = {
@@ -157,6 +168,8 @@ def build_accounting_view(
         )
     matched_movements = _matched_movements(visible)
     refund_links = _refund_links(visible)
+    classifications = classifications or {}
+    credit_account_ids = credit_account_ids or set()
 
     rendered = []
     raw_spending = Decimal("0")
@@ -183,6 +196,16 @@ def build_accounting_view(
         accounting_type = matched_movements.get(source_id)
         if original is not None and amount < 0:
             accounting_type = "refund"
+        elif accounting_type is None and _is_card_payment(source):
+            accounting_type = "credit_card_payment"
+        elif accounting_type is None and _is_transfer(source):
+            accounting_type = "internal_transfer"
+        elif (
+            accounting_type is None
+            and amount < 0
+            and source.get("account_id") in credit_account_ids
+        ):
+            accounting_type = "refund"
         elif accounting_type is None:
             if pending:
                 accounting_type = "pending"
@@ -199,8 +222,9 @@ def build_accounting_view(
             elif amount < 0:
                 cash_inflows += -amount
 
-        category_source = original if accounting_type == "refund" else source
-        primary, detailed = _provider_category(category_source)
+        category_source = original if original is not None and accounting_type == "refund" else source
+        classification = classifications.get(category_source["transaction_id"])
+        primary, detailed = _provider_category(category_source, classification)
         if accounting_type == "spending":
             if pending:
                 provisional_spending += amount
@@ -220,7 +244,10 @@ def build_accounting_view(
                 "business": False,
                 "excluded": False,
                 "personal_share_percent": 100,
-                **adjustments_by_id.get(original["transaction_id"], {}),
+                **adjustments_by_id.get(
+                    original["transaction_id"] if original is not None else source_id,
+                    {},
+                ),
             }
             adjusted_spending += amount * _personal_fraction(original_adjustment)
             spending_by_category[primary] = spending_by_category.get(
@@ -233,7 +260,11 @@ def build_accounting_view(
             "id": source_id,
             "date": source["date"],
             "cash_flow_date": source["date"],
-            "merchant_name": source.get("merchant_name") or source.get("name"),
+            "merchant_name": (
+                classifications.get(source_id, {}).get("merchant_name")
+                or source.get("merchant_name")
+                or source.get("name")
+            ),
             "amount": _money(amount),
             "status": "pending" if pending else "posted",
             "accounting_type": accounting_type,
@@ -250,7 +281,7 @@ def build_accounting_view(
             },
             "provider_versions": versions_by_id.get(source_id, []),
         }
-        if accounting_type == "refund":
+        if accounting_type == "refund" and original is not None:
             rendered_item["analytic_purchase_date"] = original["date"]
             rendered_item["refunds_transaction_id"] = original["transaction_id"]
         rendered.append(
@@ -291,7 +322,21 @@ def transaction_accounting(request: Request) -> dict:
     provider_versions = request.app.state.storage.list_provider_record_versions(
         owner, "transaction"
     )
-    return build_accounting_view(transactions, adjustments, provider_versions)
+    accounts = request.app.state.storage.list_financial_records(owner, "account")
+    credit_account_ids = {
+        item["account_id"]
+        for item in accounts
+        if not item.get("removed") and item.get("type") == "credit"
+    }
+    from .classification import effective_classifications
+
+    return build_accounting_view(
+        transactions,
+        adjustments,
+        provider_versions,
+        effective_classifications(request.app.state.storage, owner),
+        credit_account_ids,
+    )
 
 
 @router.patch("/api/private/transactions/{transaction_id}/adjustment")

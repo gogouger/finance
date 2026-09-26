@@ -31,6 +31,7 @@ from .payroll import router as payroll_router
 from .scenarios import router as scenarios_router
 from .storage import EncryptedStorage
 from .sync import router as sync_router
+from .spending import router as spending_router
 
 
 @asynccontextmanager
@@ -59,6 +60,7 @@ app.include_router(scenarios_router)
 app.include_router(connections_router)
 app.include_router(dashboard_router)
 app.include_router(sync_router)
+app.include_router(spending_router)
 app.include_router(payroll_router)
 app.include_router(accounting_router)
 app.include_router(assets_router)

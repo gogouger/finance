@@ -266,6 +266,21 @@ def _effective_classification(
     return _provider_classification(transaction), None
 
 
+def effective_classifications(storage, owner: str) -> dict[str, dict]:
+    stored = {
+        item["transaction_id"]: item
+        for item in storage.list_transaction_classifications(owner)
+    }
+    rules = storage.list_classification_rules(owner)
+    return {
+        item["transaction_id"]: _effective_classification(
+            item, stored.get(item["transaction_id"]), rules
+        )[0]
+        for item in storage.list_financial_records(owner, "transaction")
+        if not item.get("removed")
+    }
+
+
 @router.put("/api/private/transactions/{transaction_id}/classification")
 def classify_transaction(
     transaction_id: str, payload: ClassificationInput, request: Request

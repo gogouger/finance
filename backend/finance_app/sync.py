@@ -66,6 +66,31 @@ def sync_connection(request: Request, connection: dict) -> dict:
         "balances": timestamp,
         "transactions": timestamp,
     }
+    liability_count = 0
+    if "liabilities" in connection.get("products", []):
+        liabilities = provider.liabilities_get(connection["access_token"]).get(
+            "liabilities", {}
+        )
+        for liability_type, values in liabilities.items():
+            for liability in values or []:
+                account_id = liability.get("account_id")
+                if not account_id:
+                    continue
+                storage.upsert_financial_record(
+                    owner,
+                    connection_id,
+                    "liability",
+                    f"{liability_type}:{account_id}",
+                    {
+                        **liability,
+                        "connection_id": connection_id,
+                        "liability_type": liability_type,
+                        "observed_at": timestamp,
+                        "source": "plaid_cached",
+                    },
+                )
+                liability_count += 1
+        freshness["liabilities"] = timestamp
     investment_counts: dict[str, int] = {}
     if "investments" in connection.get("products", []):
         investments = provider.investments_holdings_get(connection["access_token"])
@@ -165,7 +190,7 @@ def sync_connection(request: Request, connection: dict) -> dict:
 
     state.update({"transactions_cursor": cursor, "freshness": freshness})
     storage.save_sync_state(connection_id, state)
-    return {"connection_id": connection_id, "accounts": len(storage.list_financial_records(owner, "account")), "balances": len(storage.list_financial_records(owner, "balance")), "transactions": len([item for item in storage.list_financial_records(owner, "transaction") if not item["removed"]]), **investment_counts, "freshness": state["freshness"]}
+    return {"connection_id": connection_id, "accounts": len(storage.list_financial_records(owner, "account")), "balances": len(storage.list_financial_records(owner, "balance")), "transactions": len([item for item in storage.list_financial_records(owner, "transaction") if not item["removed"]]), "liabilities": liability_count, **investment_counts, "freshness": state["freshness"]}
 
 
 @router.post("/api/private/connections/{connection_id}/refresh")

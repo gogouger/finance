@@ -11,6 +11,8 @@ from pathlib import Path
 
 import pytest
 
+from backend.finance_app.accounting import build_accounting_view
+
 
 def _unused_port() -> int:
     with socket.socket() as listener:
@@ -112,6 +114,42 @@ def accounting_service(tmp_path: Path):
 
 
 OWNER = {"X-Forwarded-User": "owner", "X-Auth-Method": "webauthn"}
+
+
+def test_unmatched_credit_card_payment_and_credit_are_not_income():
+    rows = [
+        {
+            "transaction_id": "payment",
+            "account_id": "credit",
+            "date": "2026-09-01",
+            "name": "Payment received",
+            "amount": -500,
+            "pending": False,
+            "personal_finance_category": {
+                "primary": "LOAN_PAYMENTS",
+                "detailed": "LOAN_PAYMENTS_CREDIT_CARD_PAYMENT",
+            },
+        },
+        {
+            "transaction_id": "refund",
+            "account_id": "credit",
+            "date": "2026-09-02",
+            "name": "Store credit",
+            "amount": -25,
+            "pending": False,
+            "personal_finance_category": {
+                "primary": "GENERAL_MERCHANDISE",
+                "detailed": "GENERAL_MERCHANDISE_OTHER",
+            },
+        },
+    ]
+
+    result = build_accounting_view(rows, credit_account_ids={"credit"})
+    by_id = {item["id"]: item for item in result["transactions"]}
+
+    assert by_id["payment"]["accounting_type"] == "credit_card_payment"
+    assert by_id["refund"]["accounting_type"] == "refund"
+    assert result["metrics"]["income"] == 0
 
 
 def _accounting(base_url: str) -> dict:

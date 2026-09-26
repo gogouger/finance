@@ -6,6 +6,7 @@ from fastapi import APIRouter, Request
 
 from .accounting import build_accounting_view
 from .auth import require_owner
+from .classification import effective_classifications
 
 
 router = APIRouter()
@@ -165,6 +166,12 @@ def financial_dashboard(request: Request) -> dict:
         transactions,
         storage.list_transaction_adjustments(owner),
         storage.list_provider_record_versions(owner, "transaction"),
+        effective_classifications(storage, owner),
+        {
+            item["account_id"]
+            for item in accounts
+            if item.get("type") == "credit"
+        },
     )
     obligations = [
         item

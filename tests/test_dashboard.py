@@ -91,7 +91,7 @@ def dashboard_service(tmp_path: Path):
                 f"{base_url}/api/private/connections/plaid/exchange",
                 {
                     "public_token": "public-sandbox-accounting",
-                    "connection_type": "banking",
+                    "connection_type": "credit",
                     "display_name": "Dashboard fixture",
                     "institution_id": "ins_dashboard",
                     "institution_name": "Dashboard Bank",
@@ -248,3 +248,34 @@ def test_private_dashboard_page_ships_the_command_center_ui(
     assert "Adjusted personal spending" in application
     assert "Unusual activity" in application
     assert "Review, not a verdict" in application
+    assert "Where the money actually went" in application
+    assert "Credit-card obligations" in application
+    assert "Transaction explorer" in application
+
+
+def test_spending_analytics_separates_payments_and_builds_time_views(
+    dashboard_service: str,
+):
+    analytics = _json(
+        _request(
+            f"{dashboard_service}/api/private/spending/analytics?months=12",
+            headers=OWNER,
+        )
+    )
+
+    assert analytics["summary"]["credit_card_payments"] == 400
+    assert analytics["summary"]["raw_spending"] == 402
+    assert analytics["summary"]["refunds"] == 100
+    assert analytics["summary"]["net_spending"] == 302
+    assert analytics["monthly"][-1]["month"] == "2026-09"
+    assert analytics["quarterly"][-1] == {
+        "period": "2026-Q3",
+        "net_spending": 302,
+    }
+    assert analytics["annual"][-1] == {
+        "period": "2026",
+        "net_spending": 302,
+    }
+    assert analytics["liabilities"][0]["last_statement_balance"] == 180
+    assert analytics["liabilities"][0]["next_payment_due_date"] == "2026-10-02"
+    assert isinstance(analytics["anomalies"], list)
