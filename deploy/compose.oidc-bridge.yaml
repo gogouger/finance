@@ -39,7 +39,7 @@ services:
         - -c
         - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/health', timeout=2)"
       interval: 30s
-      timeout: 3s
+      timeout: 10s
       start_period: 5s
       retries: 3
     networks:
