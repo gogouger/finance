@@ -92,6 +92,8 @@ def import_capital_one_csv(
     storage: EncryptedStorage,
     connection: dict,
     source: Iterable[str],
+    *,
+    dry_run: bool = False,
 ) -> dict:
     if connection.get("provider") != "plaid" or connection.get("status") == "disconnected":
         raise ValueError("the target must be an active Plaid connection")
@@ -169,13 +171,14 @@ def import_capital_one_csv(
             existing[fingerprint] -= 1
             overlapped += 1
             continue
-        storage.upsert_financial_record(
-            owner,
-            connection_id,
-            "transaction",
-            transaction["transaction_id"],
-            transaction,
-        )
+        if not dry_run:
+            storage.upsert_financial_record(
+                owner,
+                connection_id,
+                "transaction",
+                transaction["transaction_id"],
+                transaction,
+            )
         imported += 1
         earliest = min(earliest, posted_date) if earliest else posted_date
         latest = max(latest, posted_date) if latest else posted_date
@@ -186,6 +189,7 @@ def import_capital_one_csv(
         "overlap_skipped": overlapped,
         "date_start": earliest,
         "date_end": latest,
+        "dry_run": dry_run,
     }
 
 
@@ -203,6 +207,7 @@ def _active_connection(storage: EncryptedStorage, connection_id: str) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Import a Capital One transaction CSV")
     parser.add_argument("--connection-id", required=True)
+    parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("csv_path", help="CSV path or - for standard input")
     args = parser.parse_args()
     encryption_key = os.environ.get("FINANCE_ENCRYPTION_KEY")
@@ -215,10 +220,14 @@ def main() -> None:
     connection = _active_connection(storage, args.connection_id)
     if args.csv_path == "-":
         source = io.TextIOWrapper(sys.stdin.buffer, encoding="utf-8-sig", newline="")
-        result = import_capital_one_csv(storage, connection, source)
+        result = import_capital_one_csv(
+            storage, connection, source, dry_run=args.dry_run
+        )
     else:
         with Path(args.csv_path).open(encoding="utf-8-sig", newline="") as source:
-            result = import_capital_one_csv(storage, connection, source)
+            result = import_capital_one_csv(
+                storage, connection, source, dry_run=args.dry_run
+            )
     print(json.dumps(result, sort_keys=True))
 
 

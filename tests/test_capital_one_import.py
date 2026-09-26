@@ -55,6 +55,7 @@ def test_import_is_idempotent_and_preserves_equal_source_rows(imported_storage):
         "overlap_skipped": 0,
         "date_start": "2024-01-02",
         "date_end": "2024-01-04",
+        "dry_run": False,
     }
     assert second["imported"] == 0
     assert second["overlap_skipped"] == 3
@@ -95,6 +96,22 @@ def test_import_skips_matching_plaid_transaction(imported_storage):
     assert result["imported"] == 0
     assert result["overlap_skipped"] == 1
     assert len(storage.list_financial_records("owner", "transaction")) == 1
+
+
+def test_dry_run_reports_without_writing(imported_storage):
+    storage, connection = imported_storage
+    result = import_capital_one_csv(
+        storage,
+        connection,
+        io.StringIO(
+            HEADER + "2024-01-01,2024-01-02,1234,STORE,Merchandise,10.25,\n"
+        ),
+        dry_run=True,
+    )
+
+    assert result["dry_run"] is True
+    assert result["imported"] == 1
+    assert storage.list_financial_records("owner", "transaction") == []
 
 
 def test_import_rejects_ambiguous_or_malformed_input(imported_storage):
