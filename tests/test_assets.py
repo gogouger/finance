@@ -130,6 +130,7 @@ def test_owner_registers_outright_home_with_private_identity_and_sourced_value(
         "selling_cost_percent": 6,
         "annual_costs": {
             "property_tax": 4500,
+            "hoa": 1200,
             "insurance": 1600,
             "utilities": 3600,
             "maintenance": 2500,
@@ -161,6 +162,11 @@ def test_owner_registers_outright_home_with_private_identity_and_sourced_value(
         "source_label": "owner estimate",
     }
     assert created["identifiers"] == home["identifiers"]
+    assert created["cost_summary"] == {
+        "annual_ownership_costs": home["annual_costs"],
+        "annual_ownership_total": 13400,
+        "linked_transaction_total": 0,
+    }
 
     with urllib.request.urlopen(
         _request(f"{asset_service}/api/private/assets", headers=OWNER)

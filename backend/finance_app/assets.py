@@ -82,6 +82,7 @@ class AssetCreate(BaseModel):
         allowed = {
             "home": {
                 "property_tax",
+                "hoa",
                 "insurance",
                 "utilities",
                 "maintenance",
