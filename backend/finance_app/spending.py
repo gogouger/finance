@@ -1,5 +1,5 @@
 import re
-from collections import Counter, defaultdict
+from collections import defaultdict
 from datetime import date, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from statistics import median
@@ -158,7 +158,7 @@ def _anomalies(rows: list[dict], monthly_by_category: dict[str, dict[str, Decima
     latest_date = max(
         (date.fromisoformat(item["date"]) for item in spending), default=date.today()
     )
-    recent_cutoff = latest_date - timedelta(days=60)
+    recent_cutoff = latest_date - timedelta(days=45)
     merchant_history: dict[str, list[dict]] = defaultdict(list)
     for item in spending:
         merchant_history[item["merchant_name"].casefold()].append(item)
@@ -173,12 +173,12 @@ def _anomalies(rows: list[dict], monthly_by_category: dict[str, dict[str, Decima
             for row in merchant_history[item["merchant_name"].casefold()]
             if row["date"] < item["date"] and row["amount"] > 0
         ]
-        if len(prior) < 4:
+        if len(prior) < 6:
             continue
         typical = Decimal(str(median(prior)))
         amount = Decimal(str(item["amount"]))
-        threshold = max(Decimal("250"), typical * Decimal("3"))
-        if amount < threshold or amount - typical < Decimal("200"):
+        threshold = max(Decimal("1000"), typical * Decimal("5"))
+        if amount < threshold or amount - typical < Decimal("750"):
             continue
         results.append(
             {
@@ -217,24 +217,6 @@ def _anomalies(rows: list[dict], monthly_by_category: dict[str, dict[str, Decima
                         "explanation": f"More than twice the median of six prior active months (${_money(baseline):,.0f}).",
                     }
                 )
-    duplicate_cutoff = latest_date - timedelta(days=90)
-    duplicates = Counter(
-        (item["date"], item["merchant_name"].casefold(), item["amount"])
-        for item in spending
-        if date.fromisoformat(item["date"]) >= duplicate_cutoff
-    )
-    for (transaction_date, merchant_name, amount), count in duplicates.items():
-        if count > 1:
-            results.append(
-                {
-                    "type": "possible_duplicate",
-                    "title": "Possible duplicate charge",
-                    "merchant_name": _merchant(merchant_name),
-                    "date": transaction_date,
-                    "amount": _money(amount),
-                    "explanation": f"{count} posted charges share the same date, merchant, and amount.",
-                }
-            )
     return sorted(
         results, key=lambda item: (item["date"], abs(item["amount"])), reverse=True
     )[:8]

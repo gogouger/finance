@@ -111,7 +111,7 @@ def _unusual_activity(accounting: dict, balance_history: dict[str, list[dict]]) 
     latest = max(
         (date.fromisoformat(item["date"]) for item in spending), default=date.today()
     )
-    recent_cutoff = latest - timedelta(days=60)
+    recent_cutoff = latest - timedelta(days=45)
     histories: dict[str, list[dict]] = defaultdict(list)
     for item in spending:
         histories[str(item.get("merchant_name") or "").casefold()].append(item)
@@ -124,11 +124,11 @@ def _unusual_activity(accounting: dict, balance_history: dict[str, list[dict]]) 
             for row in histories[str(item.get("merchant_name") or "").casefold()]
             if row["date"] < item["date"] and row["amount"] > 0
         ]
-        if len(prior) < 4:
+        if len(prior) < 6:
             continue
         typical = median(prior)
-        threshold = max(250, typical * 3)
-        if item["amount"] < threshold or item["amount"] - typical < 200:
+        threshold = max(1000, typical * 5)
+        if item["amount"] < threshold or item["amount"] - typical < 750:
             continue
         signals.append(
             {
@@ -315,6 +315,6 @@ def financial_dashboard(request: Request) -> dict:
         "unusual_activity": _unusual_activity(full_accounting, balance_history),
         "unusual_activity_method": {
             "definition": "Recent charges are compared with earlier charges at the same merchant; balance changes use a high materiality threshold.",
-            "limitations": "A charge needs at least four earlier merchant-specific observations before it can be flagged. Signals are not fraud determinations.",
+            "limitations": "A charge needs at least six earlier merchant-specific observations and must exceed both $1,000 and a strong merchant-relative threshold. Same-day repeats are not called duplicates without stronger provider evidence, and signals are not fraud determinations.",
         },
     }

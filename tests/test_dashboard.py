@@ -225,7 +225,7 @@ def test_expected_recurring_costs_are_not_mislabelled_as_unusual(
     ]
 
     assert recurring_charge_signals == []
-    assert "four earlier merchant-specific observations" in dashboard[
+    assert "six earlier merchant-specific observations" in dashboard[
         "unusual_activity_method"
     ]["limitations"]
     assert "not fraud determinations" in dashboard["unusual_activity_method"][

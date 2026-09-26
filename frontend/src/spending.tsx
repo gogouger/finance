@@ -522,14 +522,14 @@ export function SpendingAnalytics() {
         <div className="section-title">
           <div>
             <p className="eyebrow">Review signals</p>
-            <h2>Large, unusual, or potentially duplicated activity</h2>
+            <h2>Strong deviations worth a second look</h2>
           </div>
           <span>{data.anomalies.length} signals</span>
         </div>
         <div className="anomaly-grid">
           {data.anomalies.length === 0 ? (
             <p className="quiet">
-              No deterministic review signals in this period.
+              No high-confidence review signals in this period.
             </p>
           ) : (
             data.anomalies.slice(0, 12).map((row, index) => (
