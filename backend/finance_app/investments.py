@@ -4,6 +4,7 @@ from math import prod
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from .auth import require_owner
+from .investment_scope import ownership_scope
 
 
 router = APIRouter()
@@ -64,6 +65,10 @@ def investment_positions(request: Request) -> dict:
         security["security_id"]: security
         for security in _active_records(storage, owner, "security")
     }
+    accounts_by_id = {
+        account["account_id"]: account
+        for account in _active_records(storage, owner, "account")
+    }
     holdings_by_position: dict[tuple[str, str], dict] = {}
     for holding in _active_records(storage, owner, "holding"):
         security = securities.get(holding["security_id"], {})
@@ -71,6 +76,9 @@ def investment_positions(request: Request) -> dict:
             **holding,
             "security_name": security.get("name") or holding.get("description"),
             "ticker_symbol": security.get("ticker_symbol") or holding.get("symbol"),
+            "ownership_scope": ownership_scope(
+                accounts_by_id.get(holding.get("account_id"))
+            ),
         }
         position_key = (
             candidate["account_id"],
@@ -124,11 +132,33 @@ def investment_positions(request: Request) -> dict:
             lot["effective_date"] for lot in known_lots
         )
     holdings.sort(key=lambda item: (item.get("security_name") or "", item["security_id"]))
+    activities = [
+        {
+            **item,
+            "ownership_scope": ownership_scope(
+                accounts_by_id.get(item.get("account_id"))
+            ),
+        }
+        for item in _active_records(storage, owner, "investment_activity")
+    ]
+    household_holdings = [
+        item for item in holdings if item["ownership_scope"] == "household"
+    ]
+    custodial_holdings = [
+        item for item in holdings if item["ownership_scope"] == "custodial"
+    ]
     return {
         "currency": "USD",
+        "summary": {
+            "household_market_value": _money(sum(float(item.get("institution_value") or 0) for item in household_holdings)),
+            "household_position_count": len(household_holdings),
+            "custodial_market_value": _money(sum(float(item.get("institution_value") or 0) for item in custodial_holdings)),
+            "custodial_position_count": len(custodial_holdings),
+            "custodial_definition": "UTMA and UGMA assets belong to their child beneficiaries and are excluded from household totals.",
+        },
         "holdings": holdings,
         "tax_lots": tax_lots,
-        "activities": _active_records(storage, owner, "investment_activity"),
+        "activities": activities,
         "securities": list(securities.values()),
         "freshness": freshness,
     }

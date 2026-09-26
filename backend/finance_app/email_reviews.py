@@ -52,6 +52,18 @@ def _strip_quoted_content(raw_message: str) -> str:
 
 def _review_items(request: Request) -> list[dict]:
     items = []
+    dashboard = financial_dashboard(request)
+    billing_count = len(dashboard.get("billing_alerts", []))
+    if billing_count:
+        items.append(
+            {
+                "kind": "unexpected_provider_charge",
+                "summary": "A RentCast charge appeared on a connected credit card",
+                "count": billing_count,
+                "confirmation_required": True,
+                "authenticated_action": "/dashboard?review=billing",
+            }
+        )
     classification_count = len(classification_review_queue(request)["items"])
     if classification_count:
         items.append(
@@ -74,7 +86,7 @@ def _review_items(request: Request) -> list[dict]:
                 "authenticated_action": "/dashboard?review=recurring",
             }
         )
-    unusual_count = len(financial_dashboard(request)["unusual_activity"])
+    unusual_count = len(dashboard["unusual_activity"])
     if unusual_count:
         items.append(
             {

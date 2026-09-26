@@ -251,6 +251,12 @@ def list_assets(request: Request) -> dict:
     }
 
 
+@router.get("/api/private/assets/valuation-provider/status")
+def valuation_provider_status(request: Request) -> dict:
+    require_owner(request)
+    return _valuation_provider(request).terms()
+
+
 def _mcp_safe_asset(asset: dict) -> dict:
     rendered = _render(asset)
     rendered.pop("identifiers", None)

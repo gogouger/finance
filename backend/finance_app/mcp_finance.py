@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field, field_validator
 from .accounting import build_accounting_view
 from .auth import require_fresh_owner, require_owner
 from .classification import effective_classifications
+from .investment_scope import is_custodial_account
 from .scenarios import calculate_scenario
 
 
@@ -332,7 +333,7 @@ def _summary(storage, owner: str) -> dict:
         key = (item.get("connection_id"), item["account_id"])
         if key not in balances or item.get("observed_at", "") > balances[key].get("observed_at", ""):
             balances[key] = item
-    cash = current_card_balance = investments = 0.0
+    cash = current_card_balance = investments = custodial_investments = 0.0
     for key, balance in balances.items():
         account_type = accounts.get(key, {}).get("type")
         value = float(balance.get("current") or 0)
@@ -341,7 +342,10 @@ def _summary(storage, owner: str) -> dict:
         elif account_type == "credit":
             current_card_balance += max(0, value)
         elif account_type == "investment":
-            investments += value
+            if is_custodial_account(accounts.get(key)):
+                custodial_investments += value
+            else:
+                investments += value
     assets = [item for item in storage.list_financial_records(owner, "household_asset") if not item.get("removed")]
     asset_value = sum(float(item["valuation"]["amount"]) for item in assets)
     registered_asset_debt = sum(
@@ -356,6 +360,7 @@ def _summary(storage, owner: str) -> dict:
             "current_card_balance": round(current_card_balance, 2),
             "registered_asset_debt": round(registered_asset_debt, 2),
             "investment_value": round(investments, 2),
+            "custodial_investment_value": round(custodial_investments, 2),
             "income": accounting["metrics"]["income"],
             "adjusted_personal_spending": accounting["metrics"]["finalized_spending"]["adjusted"],
         },
@@ -387,6 +392,8 @@ def _execute_tool(storage, owner: str, payload: ToolCall) -> tuple[dict, str, di
                 "cash": "Latest connected depository balances.",
                 "current_card_balance": "A transient provider-reported snapshot, not long-term debt.",
                 "registered_asset_debt": "Debt explicitly registered against a home or vehicle.",
+                "investment_value": "Latest household investment balances, excluding children's UTMA and UGMA accounts.",
+                "custodial_investment_value": "Children's UTMA and UGMA balances, tracked separately and excluded from household net worth.",
                 "adjusted_personal_spending": "Posted purchases after refunds and owner adjustments.",
             }
         }, "aggregate", None
@@ -408,7 +415,21 @@ def _execute_tool(storage, owner: str, payload: ToolCall) -> tuple[dict, str, di
         }, "aggregate", None
     if payload.tool == "finance.investments.summary":
         holdings = [item for item in storage.list_financial_records(owner, "holding") if not item.get("removed")]
-        return {"currency": "USD", "market_value": round(sum(float(item.get("institution_value") or 0) for item in holdings), 2), "position_count": len(holdings)}, "aggregate", None
+        accounts = {
+            item["account_id"]: item
+            for item in storage.list_financial_records(owner, "account")
+            if not item.get("removed")
+        }
+        household = [item for item in holdings if not is_custodial_account(accounts.get(item.get("account_id")))]
+        custodial = [item for item in holdings if is_custodial_account(accounts.get(item.get("account_id")))]
+        return {
+            "currency": "USD",
+            "market_value": round(sum(float(item.get("institution_value") or 0) for item in household), 2),
+            "position_count": len(household),
+            "custodial_market_value": round(sum(float(item.get("institution_value") or 0) for item in custodial), 2),
+            "custodial_position_count": len(custodial),
+            "definition": "Household investments exclude children's UTMA and UGMA assets; custodial totals are reported separately.",
+        }, "aggregate", None
     if payload.tool == "finance.scenarios.list":
         return {"scenarios": [_redact({key: value for key, value in item.items() if key != "output"}) for item in storage.list_scenarios(owner)]}, "private_scenario", None
     if payload.tool == "finance.scenario.calculate":

@@ -151,6 +151,15 @@ type ActivitySignal = {
   confidence: { level: string; rationale: string };
   review_required: boolean;
 };
+type BillingAlert = {
+  type: "unexpected_provider_charge";
+  provider: string;
+  date: string | null;
+  amount: number;
+  currency: "USD";
+  message: string;
+  review_required: boolean;
+};
 type DashboardResult = {
   currency: "USD";
   generated_at: string;
@@ -174,6 +183,7 @@ type DashboardResult = {
   };
   spending_by_category: Record<string, number>;
   unusual_activity: ActivitySignal[];
+  billing_alerts: BillingAlert[];
   unusual_activity_method: { definition: string; limitations: string };
 };
 
@@ -815,6 +825,8 @@ function Dashboard() {
     "income",
     "adjusted_personal_spending",
     "true_monthly_cost",
+    "investment_value",
+    "custodial_investment_value",
   ];
   return (
     <main>
@@ -843,6 +855,17 @@ function Dashboard() {
       )}
       {dashboard && (
         <>
+          {dashboard.billing_alerts.map((alert, index) => (
+            <p
+              className="dashboard-error"
+              role="alert"
+              key={`${alert.provider}-${alert.date}-${index}`}
+            >
+              {alert.message} Posted {alert.date || "on an unknown date"} for{" "}
+              {money.format(alert.amount)}. Review the charge and the RentCast
+              subscription.
+            </p>
+          ))}
           <section
             className="dashboard-metrics"
             aria-label="Financial overview"

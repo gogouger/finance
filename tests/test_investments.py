@@ -137,6 +137,13 @@ def test_investment_sync_is_idempotent_and_never_invents_cost_basis(
         positions = json.load(response)
 
     assert positions["currency"] == "USD"
+    assert positions["summary"] == {
+        "household_market_value": 1760,
+        "household_position_count": 2,
+        "custodial_market_value": 0,
+        "custodial_position_count": 0,
+        "custodial_definition": "UTMA and UGMA assets belong to their child beneficiaries and are excluded from household totals.",
+    }
     assert positions["freshness"][connection["id"]]["holdings"]
     holdings = {holding["ticker_symbol"]: holding for holding in positions["holdings"]}
     assert holdings["TOTAL"]["cost_basis_status"] == "stale"
@@ -144,6 +151,8 @@ def test_investment_sync_is_idempotent_and_never_invents_cost_basis(
     assert holdings["TOTAL"]["cost_basis_as_of"] == "2025-12-31"
     assert holdings["BOND"]["cost_basis_status"] == "missing"
     assert holdings["BOND"]["cost_basis"] is None
+    assert all(item["ownership_scope"] == "household" for item in positions["holdings"])
+    assert all(item["ownership_scope"] == "household" for item in positions["activities"])
 
 
 def test_performance_explains_balance_change_and_compares_matching_benchmark(

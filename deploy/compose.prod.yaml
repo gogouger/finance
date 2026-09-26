@@ -29,6 +29,8 @@ services:
       - /opt/data/finance/release-gates.json:/run/finance/release-gates.json:ro
       - /opt/data/finance/secrets/plaid-credentials.fernet:/run/secrets/plaid-credentials.fernet:ro
       - /opt/data/finance/keys/plaid-credentials.key:/run/secrets/plaid-credentials.key:ro
+      - /opt/data/finance/secrets/rentcast-credentials.fernet:/run/secrets/rentcast-credentials.fernet:ro
+      - /opt/data/finance/keys/rentcast-credentials.key:/run/secrets/rentcast-credentials.key:ro
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=64m
     expose:

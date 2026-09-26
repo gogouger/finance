@@ -10,6 +10,14 @@ from base64 import urlsafe_b64encode
 from contextlib import contextmanager
 from pathlib import Path
 
+import pytest
+
+from backend.finance_app.valuation_provider import (
+    RentCastQuotaTracker,
+    RentCastValuationProvider,
+    ValuationProviderRateLimited,
+)
+
 
 OWNER = {"X-Forwarded-User": "owner", "X-Auth-Method": "webauthn"}
 
@@ -107,6 +115,37 @@ def _create_home(base_url: str) -> dict:
         )
     ) as response:
         return json.load(response)
+
+
+def test_rentcast_tracker_counts_successes_and_stops_below_provider_allowance(
+    tmp_path: Path, monkeypatch,
+):
+    class Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            return b'{"price": 625000, "priceRangeLow": 600000, "priceRangeHigh": 650000, "comparables": []}'
+
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *args, **kwargs: Response())
+    usage_path = tmp_path / "rentcast-usage.json"
+    provider = RentCastValuationProvider(
+        "secret-never-persisted", RentCastQuotaTracker(str(usage_path), monthly_limit=1)
+    )
+
+    estimate = provider.fetch("home", {"address": "123 Private Lane, Castle Rock, CO"})
+
+    assert estimate[0]["amount"] == 625000
+    assert provider.terms()["quota"]["successful_requests"] == 1
+    assert provider.terms()["quota"]["remaining_before_app_limit"] == 0
+    assert "secret-never-persisted" not in usage_path.read_text()
+    with pytest.raises(ValuationProviderRateLimited, match="no request was sent"):
+        provider.fetch("home", {"address": "123 Private Lane, Castle Rock, CO"})
 
 
 def test_refresh_records_conflicting_sourced_observations_without_overwriting_history(

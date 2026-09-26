@@ -161,6 +161,7 @@ def test_owner_sees_explainable_metrics_from_normalized_records(
         "true_monthly_cost": 0,
         "credit_card_liabilities": 200,
         "investment_value": 0,
+        "custodial_investment_value": 0,
         "retirement_value": 0,
         "household_asset_value": 600000,
     }
