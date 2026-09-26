@@ -11,6 +11,8 @@ from pathlib import Path
 
 import pytest
 
+from backend.finance_app.investments import _tax_treatment
+
 
 def _unused_port() -> int:
     with socket.socket() as listener:
@@ -107,6 +109,14 @@ def _connect_investment_account(base_url: str) -> tuple[dict, dict[str, str]]:
         "X-Forwarded-User": "owner",
         "X-Auth-Method": "webauthn",
     }
+
+
+def test_tax_treatment_keeps_hsa_and_custodial_assets_out_of_taxable_brokerage():
+    assert _tax_treatment({"name": "Health Savings Account"}) == "hsa"
+    assert _tax_treatment({"name": "ROTH IRA"}) == "roth"
+    assert _tax_treatment({"subtype": "401k"}) == "tax_deferred"
+    assert _tax_treatment({"subtype": "utma"}) == "custodial"
+    assert _tax_treatment({"name": "Joint WROS"}) == "taxable"
 
 
 def test_investment_sync_is_idempotent_and_never_invents_cost_basis(

@@ -191,7 +191,7 @@ type InvestmentAccountSummary = {
   name: string;
   subtype: string | null;
   ownership_scope: "household" | "custodial";
-  tax_treatment: "taxable" | "tax_deferred" | "roth" | "custodial";
+  tax_treatment: "taxable" | "tax_deferred" | "roth" | "hsa" | "custodial";
   market_value: number;
   position_count: number;
   known_cost_basis: number;
@@ -916,6 +916,7 @@ function InvestmentOverview({ data }: { data: InvestmentResult }) {
     taxable: "Taxable brokerage",
     tax_deferred: "Tax deferred",
     roth: "Roth",
+    hsa: "Health savings account",
     custodial: "Child-owned custodial",
   };
   return (

@@ -32,6 +32,8 @@ def _tax_treatment(account: dict | None) -> str:
     ).casefold()
     if "roth" in searchable:
         return "roth"
+    if "health savings" in searchable or " hsa" in f" {searchable}":
+        return "hsa"
     if any(marker in searchable for marker in ("401", "403", "ira", "pension", "retirement")):
         return "tax_deferred"
     return "taxable"
