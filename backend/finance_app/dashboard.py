@@ -301,6 +301,7 @@ def financial_dashboard(request: Request) -> dict:
     return {
         "currency": "USD",
         "generated_at": datetime.now(UTC).isoformat(),
+        "data_quality": accounting_metrics["deduplication"],
         "reporting_period": {
             "label": "Trailing 12 months",
             "start": reporting_start.isoformat(),

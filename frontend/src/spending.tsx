@@ -79,6 +79,12 @@ type Anomaly = {
   explanation: string;
 };
 type SpendingResult = {
+  data_quality: {
+    cross_source_records_excluded: number;
+    cross_source_absolute_value_excluded: number;
+    preferred_source: string;
+    raw_records_preserved: boolean;
+  };
   period: { months: number; start: string | null; end: string };
   summary: {
     raw_spending: number;
@@ -340,6 +346,14 @@ export function SpendingAnalytics() {
           <small>Cash movement, not spending</small>
         </article>
       </div>
+      {data.data_quality.cross_source_records_excluded > 0 && (
+        <p className="dedupe-note">
+          {data.data_quality.cross_source_records_excluded} overlapping CSV/Plaid
+          copies ({money.format(data.data_quality.cross_source_absolute_value_excluded)})
+          are excluded from every total. Plaid is used for the calculated record;
+          the encrypted raw imports remain preserved for audit history.
+        </p>
+      )}
       <div className="analytics-grid wide-left">
         <article className="analytics-card">
           <div className="section-title">

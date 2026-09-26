@@ -321,6 +321,7 @@ def spending_analytics(
     period_months = max(1, len(month_keys))
     return {
         "currency": "USD",
+        "data_quality": accounting["metrics"]["deduplication"],
         "period": {
             "months": months,
             "start": start.isoformat() if start != date.min else None,

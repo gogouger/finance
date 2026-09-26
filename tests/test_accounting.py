@@ -163,6 +163,68 @@ def test_unmatched_credit_card_payment_and_credit_are_not_income():
     }
 
 
+def test_cross_source_overlap_prefers_plaid_without_collapsing_real_repeats():
+    rows = [
+        {
+            "transaction_id": "csv-1",
+            "account_id": "credit",
+            "date": "2026-08-21",
+            "name": "UNITED AIRLINES 016123",
+            "amount": 601.5,
+            "pending": False,
+            "source": "capital_one_csv",
+        },
+        {
+            "transaction_id": "csv-2",
+            "account_id": "credit",
+            "date": "2026-08-21",
+            "name": "UNITED AIRLINES 016456",
+            "amount": 601.5,
+            "pending": False,
+            "source": "capital_one_csv",
+        },
+        {
+            "transaction_id": "plaid-1",
+            "account_id": "credit",
+            "date": "2026-08-21",
+            "merchant_name": "United Airlines",
+            "amount": 601.5,
+            "pending": False,
+        },
+        {
+            "transaction_id": "plaid-2",
+            "account_id": "credit",
+            "date": "2026-08-21",
+            "merchant_name": "United Airlines",
+            "amount": 601.5,
+            "pending": False,
+        },
+        {
+            "transaction_id": "unique-repeat",
+            "account_id": "credit",
+            "date": "2026-08-21",
+            "merchant_name": "United Airlines",
+            "amount": 601.5,
+            "pending": False,
+        },
+    ]
+
+    result = build_accounting_view(rows, credit_account_ids={"credit"})
+
+    assert {item["id"] for item in result["transactions"]} == {
+        "plaid-1",
+        "plaid-2",
+        "unique-repeat",
+    }
+    assert result["metrics"]["finalized_spending"]["raw"] == 1804.5
+    assert result["metrics"]["deduplication"] == {
+        "cross_source_records_excluded": 2,
+        "cross_source_absolute_value_excluded": 1203,
+        "preferred_source": "plaid",
+        "raw_records_preserved": True,
+    }
+
+
 def _accounting(base_url: str) -> dict:
     with urllib.request.urlopen(
         _request(f"{base_url}/api/private/transactions/accounting", headers=OWNER)

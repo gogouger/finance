@@ -1,3 +1,5 @@
+import re
+from difflib import SequenceMatcher
 from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
 
@@ -28,6 +30,75 @@ class TransactionAdjustment(BaseModel):
 
 def _money(value: Decimal | float | int) -> float:
     return float(Decimal(str(value)).quantize(CENT, rounding=ROUND_HALF_UP))
+
+
+def _name_similarity(left: dict, right: dict) -> float:
+    def normalized(item: dict) -> str:
+        value = item.get("merchant_name") or item.get("name") or ""
+        return re.sub(r"[^a-z0-9]+", " ", value.casefold()).strip()
+
+    left_name = normalized(left)
+    right_name = normalized(right)
+    if not left_name or not right_name:
+        return 0
+    shorter, longer = sorted((left_name, right_name), key=len)
+    if len(shorter) >= 4 and shorter in longer:
+        return 1
+    return SequenceMatcher(None, left_name, right_name).ratio()
+
+
+def _transaction_dates(item: dict) -> set[date]:
+    values = {item.get("date"), item.get("authorized_date")}
+    return {date.fromisoformat(value) for value in values if value}
+
+
+def _deduplicate_cross_source(transactions: list[dict]) -> tuple[list[dict], dict]:
+    csv_rows = [item for item in transactions if item.get("source") == "capital_one_csv"]
+    provider_rows = [item for item in transactions if item.get("source") != "capital_one_csv"]
+    used_provider_ids: set[str] = set()
+    duplicate_csv_ids: set[str] = set()
+    duplicate_value = Decimal("0")
+
+    for csv_row in sorted(csv_rows, key=lambda item: item["date"]):
+        amount = Decimal(str(csv_row.get("amount", 0)))
+        candidates = []
+        csv_dates = _transaction_dates(csv_row)
+        for provider_row in provider_rows:
+            provider_id = provider_row["transaction_id"]
+            if provider_id in used_provider_ids:
+                continue
+            if provider_row.get("account_id") != csv_row.get("account_id"):
+                continue
+            if Decimal(str(provider_row.get("amount", 0))) != amount:
+                continue
+            provider_dates = _transaction_dates(provider_row)
+            distance = min(
+                (abs((left - right).days) for left in csv_dates for right in provider_dates),
+                default=999,
+            )
+            similarity = _name_similarity(csv_row, provider_row)
+            if distance == 0 or (distance <= 3 and similarity >= 0.55):
+                candidates.append((distance, -similarity, provider_id))
+        if not candidates:
+            continue
+        _, _, provider_id = min(candidates)
+        used_provider_ids.add(provider_id)
+        duplicate_csv_ids.add(csv_row["transaction_id"])
+        duplicate_value += abs(amount)
+
+    return (
+        [
+            item
+            for item in transactions
+            if item["transaction_id"] not in duplicate_csv_ids
+        ],
+        {
+            "cross_source_records_excluded": len(duplicate_csv_ids),
+            "cross_source_absolute_value_excluded": _money(duplicate_value),
+            "preferred_source": "plaid",
+            "raw_records_preserved": True,
+        },
+    )
 
 
 def _provider_category(
@@ -142,7 +213,9 @@ def build_accounting_view(
     classifications: dict[str, dict] | None = None,
     credit_account_ids: set[str] | None = None,
 ) -> dict:
-    active = [item for item in transactions if not item.get("removed")]
+    active, deduplication = _deduplicate_cross_source(
+        [item for item in transactions if not item.get("removed")]
+    )
     replaced_pending_ids = {
         item["pending_transaction_id"]
         for item in active
@@ -306,6 +379,7 @@ def build_accounting_view(
         "currency": "USD",
         "transactions": sorted(rendered, key=lambda item: (item["date"], item["id"])),
         "metrics": {
+            "deduplication": deduplication,
             "finalized_spending": {
                 "raw": _money(raw_spending),
                 "adjusted": _money(adjusted_spending),

@@ -270,6 +270,7 @@ def test_spending_analytics_separates_payments_and_builds_time_views(
     assert analytics["summary"]["raw_spending"] == 402
     assert analytics["summary"]["refunds"] == 100
     assert analytics["summary"]["net_spending"] == 302
+    assert analytics["data_quality"]["cross_source_records_excluded"] == 0
     assert analytics["monthly"][-1]["month"] == "2026-09"
     assert analytics["quarterly"][-1] == {
         "period": "2026-Q3",
