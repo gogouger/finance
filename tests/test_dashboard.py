@@ -284,6 +284,7 @@ def test_spending_analytics_separates_payments_and_builds_time_views(
     assert analytics["yearly"][0]["net_spending"] == 302
     assert analytics["yearly"][0]["months_covered"] == 1
     assert analytics["yearly"][0]["complete_year"] is False
+    assert analytics["yearly"][0]["current_year"] is True
     assert analytics["liabilities"][0]["last_statement_balance"] == 180
     assert analytics["liabilities"][0]["next_payment_due_date"] == "2026-10-02"
     assert isinstance(analytics["anomalies"], list)

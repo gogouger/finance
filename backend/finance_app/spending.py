@@ -117,6 +117,7 @@ def _yearly_metrics(rows: list[dict], latest: date) -> list[dict]:
                 "average_per_observed_month": _money(average),
                 "annualized_pace": _money(average * Decimal("12")),
                 "complete_year": months_covered == 12 and int(year) < latest.year,
+                "current_year": int(year) == latest.year,
             }
         )
     return result

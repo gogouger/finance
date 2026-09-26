@@ -27,6 +27,7 @@ type YearlyRow = {
   average_per_observed_month: number;
   annualized_pace: number;
   complete_year: boolean;
+  current_year: boolean;
 };
 type MonthRow = {
   month: string;
@@ -455,7 +456,8 @@ export function SpendingAnalytics() {
                 <div><dt>Card payments excluded</dt><dd>{money.format(row.card_payments)}</dd></div>
                 <div><dt>Transactions</dt><dd>{row.transaction_count}</dd></div>
               </dl>
-              {!row.complete_year && <p>At this pace: {money.format(row.annualized_pace)} over 12 months. This is context, not a forecast.</p>}
+              {row.current_year && <p>Current pace: {money.format(row.annualized_pace)} over 12 months. This is context, not a forecast.</p>}
+              {!row.complete_year && !row.current_year && <p>Partial historical import. No full-year extrapolation is shown.</p>}
             </article>
           ))}
         </div>
