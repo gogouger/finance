@@ -36,6 +36,7 @@ class Settings:
     redirect_uri: str
     post_logout_uri: str
     allow_http_for_tests: bool
+    backchannel_url: str = ""
     session_seconds: int = 12 * 60 * 60
     freshness_seconds: int = 300
 
@@ -53,6 +54,9 @@ class Settings:
                 "FINANCE_OIDC_ALLOW_HTTP_FOR_TESTS", "false"
             ).lower()
             == "true",
+            backchannel_url=os.environ.get(
+                "FINANCE_OIDC_BACKCHANNEL_URL", ""
+            ).rstrip("/"),
         )
 
     def validate(self) -> None:
@@ -77,6 +81,10 @@ class Settings:
                 and parsed.hostname in {"127.0.0.1", "localhost", "::1"}
             ):
                 raise OIDCError("OIDC bridge URLs must use HTTPS")
+        if self.backchannel_url:
+            parsed = urllib.parse.urlparse(self.backchannel_url)
+            if (parsed.scheme, parsed.hostname, parsed.path) != ("http", "caddy", ""):
+                raise OIDCError("OIDC backchannel must be the private Caddy service")
 
 
 class ServerState:
@@ -161,11 +169,30 @@ def _same_origin(url: str) -> None:
         raise OIDCError("OIDC metadata endpoint origin does not match issuer")
 
 
+def _backchannel_url(url: str) -> str:
+    _same_origin(url)
+    if not settings.backchannel_url:
+        return url
+    public = urllib.parse.urlparse(url)
+    private = urllib.parse.urlparse(settings.backchannel_url)
+    return urllib.parse.urlunparse(
+        (private.scheme, private.netloc, public.path, public.params, public.query, "")
+    )
+
+
+def _response_origin_is_expected(url: str, requested_url: str) -> bool:
+    actual = urllib.parse.urlparse(url)
+    expected = urllib.parse.urlparse(requested_url)
+    return (actual.scheme, actual.netloc) == (expected.scheme, expected.netloc)
+
+
 def _json_get(url: str) -> dict[str, Any]:
     _same_origin(url)
+    request_url = _backchannel_url(url)
     try:
-        with urllib.request.urlopen(url, timeout=5) as response:
-            _same_origin(response.geturl())
+        with urllib.request.urlopen(request_url, timeout=5) as response:
+            if not _response_origin_is_expected(response.geturl(), request_url):
+                raise OIDCError("OIDC backchannel redirected to an unexpected origin")
             if response.headers.get_content_type() != "application/json":
                 raise OIDCError("OIDC endpoint returned an unexpected content type")
             return json.load(response)
@@ -191,11 +218,12 @@ def _discovery() -> dict[str, Any]:
 
 def _post_token(endpoint: str, fields: dict[str, str]) -> dict[str, Any]:
     _same_origin(endpoint)
+    request_url = _backchannel_url(endpoint)
     encoded_client = urllib.parse.quote(settings.client_id, safe="")
     encoded_secret = urllib.parse.quote(settings.client_secret, safe="")
     basic = base64.b64encode(f"{encoded_client}:{encoded_secret}".encode()).decode()
     request = urllib.request.Request(
-        endpoint,
+        request_url,
         data=urllib.parse.urlencode(fields).encode(),
         headers={
             "Accept": "application/json",
@@ -206,7 +234,8 @@ def _post_token(endpoint: str, fields: dict[str, str]) -> dict[str, Any]:
     )
     try:
         with urllib.request.urlopen(request, timeout=5) as response:
-            _same_origin(response.geturl())
+            if not _response_origin_is_expected(response.geturl(), request_url):
+                raise OIDCError("OIDC backchannel redirected to an unexpected origin")
             if response.headers.get_content_type() != "application/json":
                 raise OIDCError("OIDC token endpoint returned an unexpected content type")
             return json.load(response)
