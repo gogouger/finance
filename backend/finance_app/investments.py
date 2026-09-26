@@ -22,6 +22,21 @@ def _money(value: float) -> float:
     return round(value + 0.0, 2)
 
 
+def _tax_treatment(account: dict | None) -> str:
+    """Classify the account without pretending that a holding is itself taxable."""
+    if ownership_scope(account) == "custodial":
+        return "custodial"
+    searchable = " ".join(
+        str((account or {}).get(field) or "")
+        for field in ("name", "official_name", "subtype")
+    ).casefold()
+    if "roth" in searchable:
+        return "roth"
+    if any(marker in searchable for marker in ("401", "403", "ira", "pension", "retirement")):
+        return "tax_deferred"
+    return "taxable"
+
+
 def _xirr(cash_flows: list[tuple[date, float]]) -> float | None:
     if not cash_flows or not any(value < 0 for _, value in cash_flows) or not any(
         value > 0 for _, value in cash_flows
@@ -147,6 +162,48 @@ def investment_positions(request: Request) -> dict:
     custodial_holdings = [
         item for item in holdings if item["ownership_scope"] == "custodial"
     ]
+    account_summaries = []
+    for account_id in sorted({item["account_id"] for item in holdings}):
+        account = accounts_by_id.get(account_id, {})
+        account_holdings = [item for item in holdings if item["account_id"] == account_id]
+        market_value = sum(float(item.get("institution_value") or 0) for item in account_holdings)
+        known_basis_holdings = [item for item in account_holdings if item.get("cost_basis") is not None]
+        known_basis_value = sum(float(item.get("institution_value") or 0) for item in known_basis_holdings)
+        known_basis = sum(float(item["cost_basis"]) for item in known_basis_holdings)
+        unrealized_gain = known_basis_value - known_basis
+        treatment = _tax_treatment(account)
+        taxable_gain = max(0, unrealized_gain) if treatment == "taxable" else 0
+        account_summaries.append(
+            {
+                "account_id": account_id,
+                "name": account.get("name") or account.get("official_name") or "Investment account",
+                "subtype": account.get("subtype"),
+                "ownership_scope": ownership_scope(account),
+                "tax_treatment": treatment,
+                "market_value": _money(market_value),
+                "position_count": len(account_holdings),
+                "known_cost_basis": _money(known_basis),
+                "known_basis_market_value": _money(known_basis_value),
+                "basis_coverage_percent": round(100 * known_basis_value / market_value, 1) if market_value else 0,
+                "unrealized_gain_on_known_basis": _money(unrealized_gain),
+                "unrealized_gain_percent": round(100 * unrealized_gain / known_basis, 1) if known_basis else None,
+                "estimated_federal_tax_if_sold": {
+                    "gain_subject_to_scenario": _money(taxable_gain),
+                    "at_0_percent": 0,
+                    "at_15_percent": _money(taxable_gain * 0.15),
+                    "at_23_8_percent": _money(taxable_gain * 0.238),
+                    "definition": "Illustrative federal long-term capital-gain scenarios on positive gains with known basis; not a tax return estimate.",
+                    "exclusions": [
+                        "state tax",
+                        "short-term gains",
+                        "income-dependent brackets",
+                        "positions without cost basis",
+                        "loss netting and carryovers",
+                    ],
+                },
+            }
+        )
+    account_summaries.sort(key=lambda item: item["market_value"], reverse=True)
     return {
         "currency": "USD",
         "summary": {
@@ -157,6 +214,7 @@ def investment_positions(request: Request) -> dict:
             "custodial_definition": "UTMA and UGMA assets belong to their child beneficiaries and are excluded from household totals.",
         },
         "holdings": holdings,
+        "account_summaries": account_summaries,
         "tax_lots": tax_lots,
         "activities": activities,
         "securities": list(securities.values()),

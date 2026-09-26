@@ -661,6 +661,53 @@ footer {
 .metric-catalog td:first-child { max-width: 340px; }
 .metric-catalog td small { display: block; margin-top: 5px; line-height: 1.45; }
 
+.wealth-story,
+.investment-overview,
+.home-overview { margin: 0 0 28px; }
+.section-title > strong { font-family: Georgia,"Times New Roman",serif; font-size: clamp(1.45rem,3vw,2.2rem); font-weight: 400; font-variant-numeric: tabular-nums; }
+.wealth-layout { display: grid; grid-template-columns: minmax(210px,.65fr) minmax(320px,1.35fr); gap: clamp(28px,6vw,72px); align-items: center; margin-top: 24px; }
+.wealth-ring { display: grid; place-items: center; width: min(100%,260px); aspect-ratio: 1; margin: auto; border-radius: 50%; }
+.wealth-ring > div { display: grid; place-items: center; width: 72%; aspect-ratio: 1; border-radius: 50%; background: #0b1c16; text-align: center; }
+.wealth-ring span,.wealth-ring small { color: #9fb2a7; font-size: .7rem; }
+.wealth-ring strong { display: block; margin: 5px 0; font-family: Georgia,"Times New Roman",serif; font-size: clamp(1.3rem,3vw,2rem); font-weight: 400; }
+.wealth-breakdown { display: grid; gap: 4px; }
+.wealth-breakdown > div { display: grid; grid-template-columns: 12px 1fr auto; gap: 12px; align-items: center; padding: 14px 0; border-bottom: 1px solid rgba(231,245,235,.1); }
+.wealth-breakdown i { width: 10px; height: 10px; border-radius: 50%; }
+.wealth-breakdown span { color: #dcebe2; font-size: .8rem; }
+.wealth-breakdown small { display: block; margin-top: 3px; color: #82988c; }
+.wealth-breakdown strong { font-variant-numeric: tabular-nums; }
+.wealth-breakdown .liability-row i { background: #e6ad9c; }
+.wealth-breakdown .liability-row strong { color: #e6ad9c; }
+.visual-note { margin: 18px 0 0; color: #9fb2a7; font-size: .76rem; line-height: 1.55; }
+
+.account-performance-list { display: grid; gap: 12px; margin-top: 24px; }
+.account-performance-list article { padding: 19px; background: rgba(131,215,173,.045); }
+.account-row-head { display: flex; justify-content: space-between; gap: 20px; align-items: start; }
+.account-row-head h3 { margin: 0 0 5px; font-size: .95rem; }
+.account-row-head span { color: #9fb2a7; font-size: .7rem; text-transform: capitalize; }
+.account-row-head > strong { font-size: 1.05rem; font-variant-numeric: tabular-nums; }
+.account-value-track { height: 7px; margin: 15px 0; overflow: hidden; border-radius: 99px; background: rgba(231,245,235,.07); }
+.account-value-track i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg,#4f9f79,#83d7ad); }
+.account-stats { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 14px; }
+.account-stats span { color: #82988c; font-size: .68rem; line-height: 1.4; }
+.account-stats strong { display: block; margin-top: 4px; color: #dcebe2; font-size: .78rem; }
+.account-stats .positive { color: #83d7ad; }.account-stats .negative { color: #e6ad9c; }
+.position-details { margin-top: 20px; padding-top: 16px; border-top: 1px solid rgba(231,245,235,.1); }
+.position-details summary { color: #83d7ad; cursor: pointer; font-size: .78rem; }
+.position-list { max-height: 390px; margin-top: 14px; padding-right: 8px; overflow: auto; scrollbar-color: #4f9f79 rgba(231,245,235,.06); }
+.position-list > div { display: flex; justify-content: space-between; gap: 18px; padding: 11px 0; border-bottom: 1px solid rgba(231,245,235,.08); font-size: .77rem; text-align: right; }
+.position-list > div > span:first-child { text-align: left; }.position-list small { display: block; max-width: 480px; margin-top: 3px; color: #82988c; font-size: .66rem; }
+.tax-explainer { margin-top: 20px; padding: 16px 18px; border-left: 3px solid #f4c86a; background: rgba(244,200,106,.06); }
+.tax-explainer strong { color: #f4c86a; font-size: .78rem; }.tax-explainer p { margin: 7px 0 0; color: #b9c9bf; font-size: .73rem; line-height: 1.55; }
+
+.home-value-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; margin: 24px 0; }
+.home-value-grid article { padding: 18px; background: rgba(131,215,173,.045); }
+.home-value-grid span,.home-value-grid small { display: block; color: #9fb2a7; font-size: .7rem; line-height: 1.5; }
+.home-value-grid > article > strong { display: block; margin: 9px 0; font-family: Georgia,"Times New Roman",serif; font-size: 1.45rem; font-weight: 400; }
+.estimate-range { margin-top: 12px; }.estimate-range i { display: block; height: 5px; border-radius: 99px; background: linear-gradient(90deg,#4f9f79,#83d7ad); }.estimate-range p { display: flex; justify-content: space-between; gap: 8px; margin: 5px 0 0; color: #b9c9bf; font-size: .64rem; }.estimate-range p span { display: inline; font-size: inherit; }
+.growth-control { display: grid; grid-template-columns: minmax(210px,.5fr) 1fr; gap: 24px; align-items: center; margin: 28px 0 20px; color: #b9c9bf; font-size: .78rem; }.growth-control label { display: flex; justify-content: space-between; gap: 10px; }.growth-control strong { color: #83d7ad; }.growth-control input { width: 100%; accent-color: #83d7ad; }
+.projection-bars { display: grid; gap: 10px; }.projection-bars > div { display: grid; grid-template-columns: 70px 1fr 105px; gap: 12px; align-items: center; font-size: .7rem; }.projection-bars span { color: #9fb2a7; }.projection-bars > div > div { height: 18px; overflow: hidden; background: rgba(231,245,235,.06); }.projection-bars i { display: block; height: 100%; background: linear-gradient(90deg,rgba(79,159,121,.55),#83d7ad); }.projection-bars strong { text-align: right; font-variant-numeric: tabular-nums; }
+
 @media (max-width: 800px) {
   .areas {
     grid-template-columns: 1fr;
@@ -691,6 +738,8 @@ footer {
   .dashboard-columns {
     grid-template-columns: 1fr;
   }
+  .wealth-layout,.home-value-grid { grid-template-columns: 1fr; }
+  .account-stats { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 520px) {
@@ -734,6 +783,8 @@ footer {
   .flow-compare {
     grid-template-columns: 1fr;
   }
+  .growth-control { grid-template-columns: 1fr; gap: 10px; }
+  .projection-bars > div { grid-template-columns: 58px 1fr 88px; gap: 8px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

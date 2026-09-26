@@ -186,6 +186,70 @@ type DashboardResult = {
   billing_alerts: BillingAlert[];
   unusual_activity_method: { definition: string; limitations: string };
 };
+type InvestmentAccountSummary = {
+  account_id: string;
+  name: string;
+  subtype: string | null;
+  ownership_scope: "household" | "custodial";
+  tax_treatment: "taxable" | "tax_deferred" | "roth" | "custodial";
+  market_value: number;
+  position_count: number;
+  known_cost_basis: number;
+  known_basis_market_value: number;
+  basis_coverage_percent: number;
+  unrealized_gain_on_known_basis: number;
+  unrealized_gain_percent: number | null;
+  estimated_federal_tax_if_sold: {
+    gain_subject_to_scenario: number;
+    at_0_percent: number;
+    at_15_percent: number;
+    at_23_8_percent: number;
+    definition: string;
+    exclusions: string[];
+  };
+};
+type InvestmentHolding = {
+  account_id: string;
+  security_id: string;
+  security_name: string | null;
+  ticker_symbol: string | null;
+  ownership_scope: "household" | "custodial";
+  institution_value: number | null;
+  cost_basis: number | null;
+};
+type InvestmentResult = {
+  summary: {
+    household_market_value: number;
+    household_position_count: number;
+    custodial_market_value: number;
+    custodial_position_count: number;
+    custodial_definition: string;
+  };
+  account_summaries: InvestmentAccountSummary[];
+  holdings: InvestmentHolding[];
+};
+type HomeAsset = {
+  id: string;
+  kind: string;
+  name: string;
+  purchase_price: number;
+  valuation: { amount: number; source_label: string; valued_at: string };
+  ownership: { debt_balance: number; net_equity_after_sale: number };
+  cost_summary: {
+    annual_ownership_costs?: Record<string, number>;
+    annual_ownership_total?: number;
+  };
+  valuation_automation?: {
+    latest_estimates?: Array<{
+      amount: number;
+      observed_at: string;
+      estimate_range?: { low: number; high: number };
+      source?: { label?: string };
+    }>;
+  };
+  valuation_history?: Array<{ amount: number; valued_at: string; source_label: string }>;
+};
+type AssetsResult = { currency: "USD"; assets: HomeAsset[] };
 
 const defaults: Inputs = {
   home_price: 500000,
@@ -799,21 +863,157 @@ function Retirement() {
   );
 }
 
+function NetWorthVisual({ dashboard }: { dashboard: DashboardResult }) {
+  const values = new Map(dashboard.metrics.map((metric) => [metric.key, metric.value]));
+  const parts = [
+    { label: "Home + vehicles", value: values.get("household_asset_value") || 0, color: "#83d7ad" },
+    { label: "Investments", value: values.get("investment_value") || 0, color: "#f4c86a" },
+    { label: "Cash", value: values.get("cash") || 0, color: "#7eb6d8" },
+  ];
+  const liabilities = (values.get("debt") || 0) + (values.get("credit_card_liabilities") || 0);
+  const gross = parts.reduce((total, item) => total + item.value, 0);
+  const net = values.get("net_worth") || gross - liabilities;
+  const max = Math.max(gross, 1);
+  const gradient = parts
+    .reduce<{ stops: string[]; cursor: number }>((result, item) => {
+      const start = result.cursor;
+      const end = start + (item.value / max) * 100;
+      result.stops.push(`${item.color} ${start}% ${end}%`);
+      result.cursor = end;
+      return result;
+    }, { stops: [], cursor: 0 }).stops.join(", ");
+  return (
+    <section className="wealth-story dashboard-panel" aria-labelledby="wealth-heading">
+      <div className="section-title">
+        <div><p className="eyebrow">Net worth, visually</p><h2 id="wealth-heading">What you own, minus what you owe</h2></div>
+        <strong>{money.format(net)}</strong>
+      </div>
+      <div className="wealth-layout">
+        <div className="wealth-ring" style={{ background: `conic-gradient(${gradient})` }}>
+          <div><span>Net worth</span><strong>{money.format(net)}</strong><small>{money.format(liabilities)} liabilities</small></div>
+        </div>
+        <div className="wealth-breakdown">
+          {parts.map((part) => (
+            <div key={part.label}>
+              <i style={{ background: part.color }} />
+              <span>{part.label}<small>{((part.value / max) * 100).toFixed(1)}% of gross assets</small></span>
+              <strong>{money.format(part.value)}</strong>
+            </div>
+          ))}
+          <div className="liability-row"><i /><span>Liabilities<small>Card snapshot + registered asset debt</small></span><strong>−{money.format(liabilities)}</strong></div>
+        </div>
+      </div>
+      <p className="visual-note">Children’s custodial investments are intentionally outside this household total.</p>
+    </section>
+  );
+}
+
+function InvestmentOverview({ data }: { data: InvestmentResult }) {
+  const householdAccounts = data.account_summaries.filter((item) => item.ownership_scope === "household");
+  const householdHoldings = data.holdings.filter((item) => item.ownership_scope === "household");
+  const maxAccount = Math.max(...householdAccounts.map((item) => item.market_value), 1);
+  const treatment = {
+    taxable: "Taxable brokerage",
+    tax_deferred: "Tax deferred",
+    roth: "Roth",
+    custodial: "Child-owned custodial",
+  };
+  return (
+    <section className="dashboard-panel investment-overview" aria-labelledby="investment-heading">
+      <div className="section-title">
+        <div><p className="eyebrow">Investments</p><h2 id="investment-heading">Performance and tax exposure</h2></div>
+        <strong>{money.format(data.summary.household_market_value)}</strong>
+      </div>
+      <p className="visual-note">“Gain” below is current value minus known cost basis—not total return. Dividends, fees, and positions without basis are not silently guessed.</p>
+      <div className="account-performance-list">
+        {householdAccounts.map((account) => (
+          <article key={account.account_id}>
+            <div className="account-row-head">
+              <div><h3>{account.name}</h3><span>{treatment[account.tax_treatment]} · {account.position_count} positions</span></div>
+              <strong>{money.format(account.market_value)}</strong>
+            </div>
+            <div className="account-value-track"><i style={{ width: `${(account.market_value / maxAccount) * 100}%` }} /></div>
+            <div className="account-stats">
+              <span>Known-basis gain <strong className={account.unrealized_gain_on_known_basis < 0 ? "negative" : "positive"}>{money.format(account.unrealized_gain_on_known_basis)}{account.unrealized_gain_percent !== null ? ` · ${account.unrealized_gain_percent.toFixed(1)}%` : ""}</strong></span>
+              <span>Basis coverage <strong>{account.basis_coverage_percent.toFixed(0)}%</strong></span>
+              <span>Illustrative federal tax at 15% <strong>{account.tax_treatment === "taxable" ? money.format(account.estimated_federal_tax_if_sold.at_15_percent) : "Not currently realized"}</strong></span>
+            </div>
+          </article>
+        ))}
+      </div>
+      <details className="position-details">
+        <summary>See every household position</summary>
+        <div className="position-list">
+          {householdHoldings.sort((a, b) => (b.institution_value || 0) - (a.institution_value || 0)).map((holding) => {
+            const gain = holding.cost_basis === null ? null : (holding.institution_value || 0) - holding.cost_basis;
+            return <div key={`${holding.account_id}-${holding.security_id}`}><span><strong>{holding.ticker_symbol || holding.security_name || "Investment"}</strong><small>{holding.security_name}</small></span><span>{money.format(holding.institution_value || 0)}<small>{gain === null ? "Basis unavailable" : `${gain >= 0 ? "+" : ""}${money.format(gain)} vs. basis`}</small></span></div>;
+          })}
+        </div>
+      </details>
+      <div className="tax-explainer">
+        <strong>Tax estimate boundaries</strong>
+        <p>Taxable accounts use 0%, 15%, and 23.8% federal long-term-gain scenarios only. Retirement trades generally do not create a current capital-gains bill; future traditional-account distributions are generally taxable, while qualified Roth distributions are generally tax-free. State tax, holding period, income brackets, loss netting, and missing basis still need tax-return data.</p>
+      </div>
+    </section>
+  );
+}
+
+function HomeOverview({ home }: { home: HomeAsset }) {
+  const [growthRate, setGrowthRate] = useState(4);
+  const estimate = home.valuation_automation?.latest_estimates?.[0];
+  const currentValue = estimate?.amount || home.valuation.amount;
+  const costs = home.cost_summary.annual_ownership_costs || {};
+  const years = [0, 5, 10, 20];
+  const projections = years.map((year) => ({ year, value: currentValue * Math.pow(1 + growthRate / 100, year) }));
+  const maxProjection = projections.at(-1)?.value || currentValue;
+  return (
+    <section className="dashboard-panel home-overview" aria-labelledby="home-heading">
+      <div className="section-title">
+        <div><p className="eyebrow">Home</p><h2 id="home-heading">Market value, carrying cost, and growth</h2></div>
+        <strong>{money.format(currentValue)}</strong>
+      </div>
+      <div className="home-value-grid">
+        <article><span>Current market estimate</span><strong>{money.format(currentValue)}</strong><small>{estimate?.source?.label || home.valuation.source_label} · {estimate ? new Date(estimate.observed_at).toLocaleDateString() : new Date(home.valuation.valued_at).toLocaleDateString()}</small>{estimate?.estimate_range && <div className="estimate-range"><i /><p>{money.format(estimate.estimate_range.low)} <span>estimated range</span> {money.format(estimate.estimate_range.high)}</p></div>}</article>
+        <article><span>County / registered value</span><strong>{money.format(home.valuation.amount)}</strong><small>{home.valuation.source_label}</small></article>
+        <article><span>Known annual carrying cost</span><strong>{money.format(home.cost_summary.annual_ownership_total || 0)}</strong><small>{Object.keys(costs).map((key) => key.replaceAll("_", " ")).join(" + ") || "No costs recorded"}. Maintenance, insurance, utilities, and improvements remain excluded until linked.</small></article>
+      </div>
+      <div className="growth-control">
+        <label htmlFor="home-growth">Annual appreciation scenario <strong>{growthRate.toFixed(1)}%</strong></label>
+        <input id="home-growth" type="range" min="0" max="8" step="0.25" value={growthRate} onChange={(event) => setGrowthRate(Number(event.target.value))} />
+      </div>
+      <div className="projection-bars" aria-label={`Home value projection at ${growthRate}% annual appreciation`}>
+        {projections.map((point) => <div key={point.year}><span>{point.year === 0 ? "Today" : `${point.year} years`}</span><div><i style={{ width: `${(point.value / maxProjection) * 100}%` }} /></div><strong>{money.format(point.value)}</strong></div>)}
+      </div>
+      <p className="visual-note">This is a compound-growth scenario, not a forecast. There is not enough time-series history for this property yet to calculate a defensible house-specific historical rate; future automated valuations will build that record.</p>
+    </section>
+  );
+}
+
 function Dashboard() {
   const [dashboard, setDashboard] = useState<DashboardResult | null>(null);
+  const [investments, setInvestments] = useState<InvestmentResult | null>(null);
+  const [assets, setAssets] = useState<AssetsResult | null>(null);
   const [error, setError] = useState("");
   useEffect(() => {
-    fetch("/api/private/dashboard")
-      .then((response) => {
+    Promise.allSettled([
+      fetch("/api/private/dashboard").then((response) => {
         if (!response.ok) throw new Error("dashboard unavailable");
-        return response.json();
-      })
-      .then(setDashboard)
-      .catch(() =>
-        setError(
-          "The financial overview could not be loaded. Check connection health and try again.",
-        ),
-      );
+        return response.json() as Promise<DashboardResult>;
+      }),
+      fetch("/api/private/investments/positions").then((response) => {
+        if (!response.ok) throw new Error("investments unavailable");
+        return response.json() as Promise<InvestmentResult>;
+      }),
+      fetch("/api/private/assets").then((response) => {
+        if (!response.ok) throw new Error("assets unavailable");
+        return response.json() as Promise<AssetsResult>;
+      }),
+    ]).then(([dashboardResult, investmentResult, assetResult]) => {
+      if (dashboardResult.status === "fulfilled") setDashboard(dashboardResult.value);
+      else setError("The financial overview could not be loaded. Check connection health and try again.");
+      if (investmentResult.status === "fulfilled") setInvestments(investmentResult.value);
+      if (assetResult.status === "fulfilled") setAssets(assetResult.value);
+    });
   }, []);
   const byKey = new Map(
     dashboard?.metrics.map((metric) => [metric.key, metric]),
@@ -921,6 +1121,11 @@ function Dashboard() {
               );
             })}
           </section>
+          <NetWorthVisual dashboard={dashboard} />
+          {investments && <InvestmentOverview data={investments} />}
+          {assets?.assets.find((asset) => asset.kind === "home") && (
+            <HomeOverview home={assets.assets.find((asset) => asset.kind === "home")!} />
+          )}
           <div className="dashboard-columns">
             <section className="dashboard-panel">
               <div className="section-title">

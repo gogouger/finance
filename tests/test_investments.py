@@ -144,6 +144,17 @@ def test_investment_sync_is_idempotent_and_never_invents_cost_basis(
         "custodial_position_count": 0,
         "custodial_definition": "UTMA and UGMA assets belong to their child beneficiaries and are excluded from household totals.",
     }
+    assert len(positions["account_summaries"]) == 1
+    account_summary = positions["account_summaries"][0]
+    assert account_summary["ownership_scope"] == "household"
+    assert account_summary["tax_treatment"] == "taxable"
+    assert account_summary["market_value"] == 1760
+    assert account_summary["known_cost_basis"] == 900
+    assert account_summary["known_basis_market_value"] == 1200
+    assert account_summary["basis_coverage_percent"] == 68.2
+    assert account_summary["unrealized_gain_on_known_basis"] == 300
+    assert account_summary["unrealized_gain_percent"] == 33.3
+    assert account_summary["estimated_federal_tax_if_sold"]["at_15_percent"] == 45
     assert positions["freshness"][connection["id"]]["holdings"]
     holdings = {holding["ticker_symbol"]: holding for holding in positions["holdings"]}
     assert holdings["TOTAL"]["cost_basis_status"] == "stale"
