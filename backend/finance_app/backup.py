@@ -72,17 +72,31 @@ def create_encrypted_snapshot(
         snapshot_db = work_dir / "finance.db"
         with sqlite3.connect(database_path) as source, sqlite3.connect(snapshot_db) as target:
             source.backup(target)
+        snapshot_files = {"finance.db": snapshot_db}
+        usage_path = data_dir / "rentcast-usage.json"
+        if usage_path.is_file():
+            snapshot_usage = work_dir / "rentcast-usage.json"
+            shutil.copy2(usage_path, snapshot_usage)
+            snapshot_files["rentcast-usage.json"] = snapshot_usage
         manifest = {
             "format": "finance-encrypted-snapshot",
             "version": 1,
             "created_at": timestamp.isoformat(),
-            "files": {"finance.db": {"sha256": _sha256(snapshot_db)}},
+            "files": {
+                name: {"sha256": _sha256(path)}
+                for name, path in snapshot_files.items()
+            },
         }
         manifest_path = work_dir / "manifest.json"
         manifest_path.write_text(json.dumps(manifest, sort_keys=True))
         archive_path = work_dir / "snapshot.tar"
         with tarfile.open(archive_path, "w") as archive:
             archive.add(snapshot_db, arcname="finance.db")
+            if "rentcast-usage.json" in snapshot_files:
+                archive.add(
+                    snapshot_files["rentcast-usage.json"],
+                    arcname="rentcast-usage.json",
+                )
             archive.add(manifest_path, arcname="manifest.json")
         temporary_output = backup_dir / f".{daily_path.name}.{uuid4().hex}.tmp"
         _encrypt_file(archive_path, temporary_output, key)
@@ -121,15 +135,22 @@ def verify_isolated_restore(
         _decrypt_file(snapshot, archive_path, key)
         with tarfile.open(archive_path, "r") as archive:
             names = set(archive.getnames())
-            if names != {"finance.db", "manifest.json"}:
+            if names not in (
+                {"finance.db", "manifest.json"},
+                {"finance.db", "rentcast-usage.json", "manifest.json"},
+            ):
                 raise ValueError("backup archive contains unexpected files")
             archive.extractall(restore_dir, filter="data")
         manifest = json.loads((restore_dir / "manifest.json").read_text())
         database_path = restore_dir / "finance.db"
-        if not hmac_compare(
-            _sha256(database_path), manifest["files"]["finance.db"]["sha256"]
-        ):
-            raise ValueError("backup manifest checksum mismatch")
+        archived_files = names - {"manifest.json"}
+        if archived_files != set(manifest.get("files", {})):
+            raise ValueError("backup manifest file list mismatch")
+        for name in archived_files:
+            if not hmac_compare(
+                _sha256(restore_dir / name), manifest["files"][name]["sha256"]
+            ):
+                raise ValueError("backup manifest checksum mismatch")
         with sqlite3.connect(database_path) as connection:
             integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
             tables = connection.execute(
@@ -143,6 +164,7 @@ def verify_isolated_restore(
             "isolated_from_live_data": isolated,
             "tables": tables,
             "snapshot": snapshot.name,
+            "verified_files": sorted(archived_files),
         }
 
 

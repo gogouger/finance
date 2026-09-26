@@ -38,6 +38,9 @@ def test_encrypted_snapshots_are_integrity_checked_restorable_and_retained(tmp_p
     backup_dir = tmp_path / "backups"
     data_dir.mkdir()
     _database(data_dir / "finance.db")
+    (data_dir / "rentcast-usage.json").write_text(
+        json.dumps({"month": "2025-01", "successful_requests": 7})
+    )
     key = Fernet.generate_key().decode()
     start = datetime(2025, 1, 1, 3, 0, tzinfo=UTC)
 
@@ -66,12 +69,14 @@ def test_encrypted_snapshots_are_integrity_checked_restorable_and_retained(tmp_p
     assert len(monthly) == 12
     assert b"sensitive amount 12345" not in daily[-1].read_bytes()
     assert b"SQLite format 3" not in daily[-1].read_bytes()
+    assert b"successful_requests" not in daily[-1].read_bytes()
 
     restored = verify_isolated_restore(daily[-1], key, live_data_dir=data_dir)
     assert restored["archive_integrity"] == "verified"
     assert restored["sqlite_integrity"] == "ok"
     assert restored["isolated_from_live_data"] is True
     assert restored["tables"] >= 1
+    assert restored["verified_files"] == ["finance.db", "rentcast-usage.json"]
 
     corrupted = tmp_path / "corrupted.tar.fernet"
     payload = bytearray(daily[-1].read_bytes())
