@@ -262,6 +262,44 @@ def test_non_income_depository_credit_offsets_spending_instead_of_becoming_incom
     assert result["metrics"]["cash_flow"]["refund_credits"] == 12
 
 
+def test_rei_coop_and_resource_exchange_keep_distinct_merchant_identities():
+    rows = [
+        {
+            "transaction_id": "rei-retail",
+            "account_id": "credit",
+            "date": "2026-09-25",
+            "name": "REI #61 GREENWOOD VIL.",
+            "merchant_name": "REI",
+            "amount": 48.24,
+            "pending": False,
+            "personal_finance_category": {
+                "primary": "GENERAL_MERCHANDISE",
+                "detailed": "GENERAL_MERCHANDISE_SPORTING_GOODS",
+            },
+        },
+        {
+            "transaction_id": "resource-exchange",
+            "account_id": "checking",
+            "date": "2026-09-21",
+            "name": "Web Authorized Pmt Resource Exchang",
+            "merchant_name": "Resource Exchange",
+            "amount": 500,
+            "pending": False,
+            "personal_finance_category": {
+                "primary": "LOAN_PAYMENTS",
+                "detailed": "LOAN_PAYMENTS_OTHER_PAYMENT",
+            },
+        },
+    ]
+
+    result = build_accounting_view(rows, credit_account_ids={"credit"})
+
+    assert {item["id"]: item["merchant_name"] for item in result["transactions"]} == {
+        "rei-retail": "REI Co-op",
+        "resource-exchange": "Resource Exchange International",
+    }
+
+
 def _accounting(base_url: str) -> dict:
     with urllib.request.urlopen(
         _request(f"{base_url}/api/private/transactions/accounting", headers=OWNER)

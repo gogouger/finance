@@ -8,6 +8,7 @@ from fastapi import HTTPException
 from pydantic import BaseModel, Field, model_validator
 
 from .auth import require_owner
+from .merchant_identity import canonical_merchant
 
 
 router = APIRouter()
@@ -349,7 +350,7 @@ def build_accounting_view(
             "cash_effect": _money(
                 -amount if not pending and not is_credit_account else 0
             ),
-            "merchant_name": (
+            "merchant_name": canonical_merchant(
                 classifications.get(source_id, {}).get("merchant_name")
                 or source.get("merchant_name")
                 or source.get("name")

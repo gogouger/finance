@@ -9,6 +9,7 @@ from fastapi import APIRouter, Query, Request
 from .accounting import build_accounting_view
 from .auth import require_owner
 from .classification import effective_classifications
+from .merchant_identity import canonical_merchant
 from .recurring import detect_recurring_costs
 
 
@@ -35,7 +36,7 @@ def _money(value: Decimal | float | int) -> float:
 
 
 def _merchant(value: str) -> str:
-    cleaned = re.sub(r"\s+", " ", value.strip())
+    cleaned = canonical_merchant(value)
     upper = cleaned.upper()
     for needle, label in MERCHANT_RULES:
         if needle in upper:

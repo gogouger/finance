@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from .auth import require_owner
+from .merchant_identity import canonical_merchant
 
 
 router = APIRouter()
@@ -32,7 +33,9 @@ def _money(value: Decimal | float | int) -> float:
 
 
 def _merchant(transaction: dict) -> str:
-    return (transaction.get("merchant_name") or transaction.get("name") or "").strip()
+    return canonical_merchant(
+        transaction.get("merchant_name") or transaction.get("name") or ""
+    )
 
 
 def _is_cost_candidate(transaction: dict, as_of: date) -> bool:
