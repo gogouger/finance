@@ -1,0 +1,192 @@
+import json
+import os
+import socket
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+from base64 import urlsafe_b64encode
+from pathlib import Path
+
+import pytest
+
+
+def _unused_port() -> int:
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        return listener.getsockname()[1]
+
+
+def _request(
+    url: str,
+    payload: dict | None = None,
+    *,
+    method: str = "GET",
+    headers: dict[str, str] | None = None,
+) -> urllib.request.Request:
+    return urllib.request.Request(
+        url,
+        data=None if payload is None else json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json", **(headers or {})},
+        method=method,
+    )
+
+
+@pytest.fixture
+def running_service(tmp_path: Path):
+    port = _unused_port()
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "FINANCE_DATA_DIR": str(tmp_path),
+            "FINANCE_ENCRYPTION_KEY": urlsafe_b64encode(b"0" * 32).decode(),
+            "PLAID_MODE": "fake",
+            "FINANCE_INTERNAL_KEY": "test-internal-key",
+        }
+    )
+    process = subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "uvicorn",
+            "backend.finance_app.main:app",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=environment,
+    )
+    base_url = f"http://127.0.0.1:{port}"
+    try:
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if process.poll() is not None:
+                stdout, stderr = process.communicate()
+                pytest.fail(f"service exited during startup\n{stdout}\n{stderr}")
+            try:
+                with urllib.request.urlopen(f"{base_url}/health", timeout=0.2):
+                    break
+            except (urllib.error.URLError, TimeoutError):
+                time.sleep(0.05)
+        else:
+            pytest.fail("service did not become healthy")
+        yield base_url
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            process.wait(timeout=5)
+
+
+def _connect_investment_account(base_url: str) -> tuple[dict, dict[str, str]]:
+    fresh_owner = {
+        "X-Forwarded-User": "owner",
+        "X-Auth-Method": "webauthn",
+        "X-Auth-Time": str(time.time()),
+    }
+    with urllib.request.urlopen(
+        _request(
+            f"{base_url}/api/private/connections/plaid/exchange",
+            {
+                "public_token": "public-sandbox-investments",
+                "connection_type": "investment",
+                "display_name": "Sandbox brokerage",
+                "institution_id": "ins_investments",
+                "institution_name": "Sandbox Investments",
+            },
+            method="POST",
+            headers=fresh_owner,
+        )
+    ) as response:
+        connection = json.load(response)
+    return connection, {
+        "X-Forwarded-User": "owner",
+        "X-Auth-Method": "webauthn",
+    }
+
+
+def test_investment_sync_is_idempotent_and_never_invents_cost_basis(
+    running_service: str,
+):
+    connection, owner = _connect_investment_account(running_service)
+    reconcile = _request(
+        f"{running_service}/api/internal/nightly-reconcile",
+        method="POST",
+        headers={"X-Internal-Key": "test-internal-key"},
+    )
+
+    with urllib.request.urlopen(reconcile) as response:
+        first = json.load(response)["connections"][0]
+    with urllib.request.urlopen(reconcile) as response:
+        second = json.load(response)["connections"][0]
+
+    assert first["holdings"] == second["holdings"] == 2
+    assert first["securities"] == second["securities"] == 2
+    assert first["investment_activities"] == second["investment_activities"] == 4
+
+    with urllib.request.urlopen(
+        _request(
+            f"{running_service}/api/private/investments/positions",
+            headers=owner,
+        )
+    ) as response:
+        positions = json.load(response)
+
+    assert positions["currency"] == "USD"
+    assert positions["freshness"][connection["id"]]["holdings"]
+    holdings = {holding["ticker_symbol"]: holding for holding in positions["holdings"]}
+    assert holdings["TOTAL"]["cost_basis_status"] == "stale"
+    assert holdings["TOTAL"]["cost_basis"] == 900
+    assert holdings["TOTAL"]["cost_basis_as_of"] == "2025-12-31"
+    assert holdings["BOND"]["cost_basis_status"] == "missing"
+    assert holdings["BOND"]["cost_basis"] is None
+
+
+def test_performance_explains_balance_change_and_compares_matching_benchmark(
+    running_service: str,
+):
+    _, owner = _connect_investment_account(running_service)
+    with urllib.request.urlopen(
+        _request(
+            f"{running_service}/api/internal/nightly-reconcile",
+            method="POST",
+            headers={"X-Internal-Key": "test-internal-key"},
+        )
+    ):
+        pass
+
+    with urllib.request.urlopen(
+        _request(
+            f"{running_service}/api/private/investments/performance"
+            "?start=2025-01-01&end=2025-12-31&benchmark=VTI",
+            headers=owner,
+        )
+    ) as response:
+        report = json.load(response)
+
+    assert report["currency"] == "USD"
+    assert report["period"] == {"start": "2025-01-01", "end": "2025-12-31"}
+    assert report["attribution"] == {
+        "beginning_value": 1000,
+        "contributions": 500,
+        "withdrawals": 100,
+        "dividends": 40,
+        "fees": 10,
+        "market_performance": 330,
+        "valuation_changes": 0,
+        "ending_value": 1760,
+    }
+    assert report["returns"]["time_weighted_percent"] == 29.0667
+    assert report["returns"]["money_weighted_xirr_percent"] == 30.3726
+    assert "external cash flows" in report["returns"]["time_weighted_definition"]
+    assert "timing and size" in report["returns"]["money_weighted_definition"]
+    assert report["benchmark"] == {
+        "symbol": "VTI",
+        "period": {"start": "2025-01-01", "end": "2025-12-31"},
+        "return_percent": 10,
+        "portfolio_excess_percent": 19.0667,
+    }

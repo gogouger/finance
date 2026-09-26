@@ -1,0 +1,1 @@
+43 3 * * * root /opt/code/personal-projects/finance/deploy/finance-backup.sh

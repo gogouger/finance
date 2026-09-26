@@ -1,0 +1,42 @@
+name: finance
+
+services:
+  finance:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: finance:local
+    restart: unless-stopped
+    user: "10001:10001"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 128
+    mem_limit: 256m
+    cpus: 0.35
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    env_file:
+      - /opt/data/finance/settings.env
+    volumes:
+      - /opt/data/finance/data:/data
+      - /opt/data/finance/backups:/backups
+      - /opt/data/finance/release-gates.json:/run/finance/release-gates.json:ro
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
+    expose:
+      - "8080"
+    networks:
+      finance_edge:
+        aliases:
+          - finance
+
+networks:
+  finance_edge:
+    external: true
+    name: finance_edge

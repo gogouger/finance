@@ -1,0 +1,1 @@
+17 5 2 * * root /opt/code/personal-projects/finance/deploy/finance-restore-test.sh

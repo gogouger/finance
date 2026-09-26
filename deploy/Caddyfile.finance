@@ -1,0 +1,40 @@
+# Finance calculators are public inside the Cloudflare US-only edge policy.
+# Household routes are authorized by Authelia and the backend is reachable only
+# on the private Docker network.
+finance.gordongouger.com {
+	import tls_origin
+	import security_headers
+	encode gzip
+
+	@public {
+		path / /preview /housing /retirement /health /ready /assets/* /api/public/*
+	}
+	@finance_preview path /preview
+	header @finance_preview {
+		-X-Frame-Options
+		Content-Security-Policy "frame-ancestors 'self' https://gordongouger.com"
+	}
+	handle @public {
+		reverse_proxy finance:8080
+	}
+
+	handle {
+		# Never allow the browser to supply identity or authentication claims.
+		# ForwardAuth currently asserts identity only; it does not expose OIDC
+		# amr/auth_time, so the backend intentionally receives no passkey claim.
+		request_header -Remote-User
+		request_header -X-Forwarded-User
+		request_header -X-Auth-Method
+		request_header -X-Auth-Time
+		forward_auth authelia:9091 {
+			uri /api/authz/forward-auth
+			copy_headers Remote-User Remote-Groups Remote-Name Remote-Email
+		}
+		reverse_proxy finance:8080 {
+			header_up X-Forwarded-User {http.request.header.Remote-User}
+			header_up -Remote-User
+			header_up -X-Auth-Method
+			header_up -X-Auth-Time
+		}
+	}
+}

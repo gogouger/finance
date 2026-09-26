@@ -1,0 +1,1 @@
+17 8 * * * root /opt/code/personal-projects/finance/deploy/nightly-reconcile.sh

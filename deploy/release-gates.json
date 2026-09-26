@@ -1,0 +1,14 @@
+{
+  "status": "blocked",
+  "reason": "Production linking requires current live deployment evidence and explicit owner approval; checked-in defaults fail closed.",
+  "gates": {
+    "encrypted_backups": false,
+    "isolated_restore": false,
+    "resource_budget": false,
+    "redacted_observability": true,
+    "accessibility": false,
+    "cloudflare_origin_controls": false,
+    "owasp_dependency_secret_review": true,
+    "zap_staging": false
+  }
+}

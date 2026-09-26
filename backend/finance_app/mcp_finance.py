@@ -1,0 +1,443 @@
+import base64
+import hashlib
+import hmac
+import json
+import secrets
+import urllib.parse
+from datetime import UTC, date, datetime, timedelta
+from typing import Any, Literal
+from uuid import uuid4
+
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field, field_validator
+
+from .accounting import build_accounting_view
+from .auth import require_fresh_owner, require_owner
+from .scenarios import calculate_scenario
+
+
+router = APIRouter()
+ACCESS_LIFETIME = timedelta(minutes=10)
+REFRESH_LIFETIME = timedelta(days=30)
+AUTHORIZATION_CODE_LIFETIME = timedelta(minutes=10)
+FINANCE_SCOPES = {
+    "finance:summary",
+    "finance:metrics",
+    "finance:spending",
+    "finance:investments",
+    "finance:scenarios",
+    "finance:transactions:detail",
+}
+TOOL_SCOPES = {
+    "finance.summary": "finance:summary",
+    "finance.cash_flow_trend": "finance:summary",
+    "finance.metric_definitions": "finance:metrics",
+    "finance.spending_breakdown": "finance:spending",
+    "finance.investments.summary": "finance:investments",
+    "finance.scenarios.list": "finance:scenarios",
+    "finance.scenario.calculate": "finance:scenarios",
+    "finance.transactions.list": "finance:transactions:detail",
+}
+DIRECT_IDENTIFIER_KEYS = {
+    "account_number",
+    "address",
+    "email",
+    "full_name",
+    "owner",
+    "parcel_id",
+    "phone",
+}
+
+
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _hash(value: str) -> str:
+    return hashlib.sha256(value.encode()).hexdigest()
+
+
+def _pkce_challenge(verifier: str) -> str:
+    return base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip("=")
+
+
+def _public_grant(grant: dict) -> dict:
+    return {
+        key: grant[key]
+        for key in (
+            "id",
+            "client_id",
+            "client_name",
+            "redirect_uri",
+            "scopes",
+            "status",
+            "created_at",
+            "revoked_at",
+        )
+        if key in grant
+    }
+
+
+def _redact(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: _redact(item)
+            for key, item in value.items()
+            if key.lower() not in DIRECT_IDENTIFIER_KEYS
+            and "token" not in key.lower()
+            and "secret" not in key.lower()
+        }
+    if isinstance(value, list):
+        return [_redact(item) for item in value]
+    return value
+
+
+class GrantCreate(BaseModel):
+    client_id: str = Field(min_length=3, max_length=120)
+    client_name: str = Field(min_length=3, max_length=120)
+    redirect_uri: str = Field(pattern=r"^https?://", max_length=500)
+    scopes: list[str] = Field(min_length=1, max_length=10)
+    code_challenge: str = Field(min_length=43, max_length=128)
+    code_challenge_method: Literal["S256"]
+
+    @field_validator("scopes")
+    @classmethod
+    def finance_scopes_only(cls, value: list[str]) -> list[str]:
+        unique = sorted(set(value))
+        unsupported = set(unique) - FINANCE_SCOPES
+        if unsupported:
+            raise ValueError(
+                f"unsupported or non-Finance scopes: {', '.join(sorted(unsupported))}"
+            )
+        return unique
+
+
+class ToolCall(BaseModel):
+    tool: str = Field(min_length=1, max_length=120)
+    arguments: dict[str, Any] = Field(default_factory=dict)
+
+
+@router.get("/.well-known/oauth-authorization-server")
+def oauth_discovery(request: Request) -> dict:
+    issuer = str(request.base_url).rstrip("/")
+    return {
+        "issuer": issuer,
+        "authorization_endpoint": f"{issuer}/api/private/mcp/grants",
+        "token_endpoint": f"{issuer}/mcp/oauth/token",
+        "grant_types_supported": ["authorization_code", "refresh_token"],
+        "response_types_supported": ["code"],
+        "code_challenge_methods_supported": ["S256"],
+        "token_endpoint_auth_methods_supported": ["none"],
+        "scopes_supported": sorted(FINANCE_SCOPES),
+    }
+
+
+@router.post("/api/private/mcp/grants")
+def create_grant(payload: GrantCreate, request: Request) -> dict:
+    owner = require_fresh_owner(request)
+    now = _now()
+    authorization_code = secrets.token_urlsafe(32)
+    grant = {
+        "id": str(uuid4()),
+        "client_id": payload.client_id,
+        "client_name": payload.client_name,
+        "redirect_uri": payload.redirect_uri,
+        "scopes": payload.scopes,
+        "status": "active",
+        "created_at": now.isoformat(),
+        "authorization_code_hash": _hash(authorization_code),
+        "authorization_code_expires_at": (now + AUTHORIZATION_CODE_LIFETIME).isoformat(),
+        "code_challenge": payload.code_challenge,
+        "code_challenge_method": payload.code_challenge_method,
+        "access_token_hash": None,
+        "access_token_expires_at": None,
+        "refresh_token_hash": None,
+        "refresh_token_expires_at": None,
+    }
+    request.app.state.storage.save_mcp_grant(owner, grant)
+    request.app.state.storage.append_audit(
+        owner,
+        {
+            "action": "mcp.grant.created",
+            "resource_type": "mcp_grant",
+            "resource_id": grant["id"],
+            "client_name": grant["client_name"],
+            "scopes": grant["scopes"],
+            "outcome": "success",
+            "occurred_at": now.isoformat(),
+        },
+    )
+    return {
+        "grant_id": grant["id"],
+        "client_name": grant["client_name"],
+        "scopes": grant["scopes"],
+        "authorization_code": authorization_code,
+        "expires_at": grant["authorization_code_expires_at"],
+    }
+
+
+@router.get("/api/private/mcp/grants")
+def list_grants(request: Request) -> dict:
+    owner = require_owner(request)
+    return {"grants": [_public_grant(item) for item in request.app.state.storage.list_mcp_grants(owner)]}
+
+
+@router.delete("/api/private/mcp/grants/{grant_id}")
+def revoke_grant(grant_id: str, request: Request) -> dict:
+    owner = require_fresh_owner(request)
+    storage = request.app.state.storage
+    grant = storage.get_mcp_grant(owner, grant_id)
+    if grant is None:
+        raise HTTPException(status_code=404, detail="MCP grant not found")
+    if grant["status"] != "revoked":
+        grant.update(
+            {
+                "status": "revoked",
+                "revoked_at": _now().isoformat(),
+                "access_token_hash": None,
+                "refresh_token_hash": None,
+            }
+        )
+        storage.save_mcp_grant(owner, grant)
+        storage.append_audit(
+            owner,
+            {
+                "action": "mcp.grant.revoked",
+                "resource_type": "mcp_grant",
+                "resource_id": grant_id,
+                "client_name": grant["client_name"],
+                "outcome": "success",
+                "occurred_at": _now().isoformat(),
+            },
+        )
+    return _public_grant(grant)
+
+
+def _find_grant(storage, field: str, token: str) -> dict | None:
+    token_hash = _hash(token)
+    for grant in storage.list_all_mcp_grants():
+        stored = grant.get(field)
+        if stored and hmac.compare_digest(stored, token_hash):
+            return grant
+    return None
+
+
+def _issue_tokens(storage, grant: dict) -> dict:
+    now = _now()
+    access_token = secrets.token_urlsafe(32)
+    refresh_token = secrets.token_urlsafe(48)
+    grant.update(
+        {
+            "authorization_code_hash": None,
+            "access_token_hash": _hash(access_token),
+            "access_token_expires_at": (now + ACCESS_LIFETIME).isoformat(),
+            "refresh_token_hash": _hash(refresh_token),
+            "refresh_token_expires_at": (now + REFRESH_LIFETIME).isoformat(),
+        }
+    )
+    storage.save_mcp_grant(grant["owner"], grant)
+    return {
+        "access_token": access_token,
+        "token_type": "Bearer",
+        "expires_in": int(ACCESS_LIFETIME.total_seconds()),
+        "refresh_token": refresh_token,
+        "scope": " ".join(grant["scopes"]),
+    }
+
+
+@router.post("/mcp/oauth/token")
+async def oauth_token(request: Request) -> JSONResponse:
+    if "application/x-www-form-urlencoded" not in request.headers.get("content-type", ""):
+        raise HTTPException(status_code=415, detail="form-encoded OAuth request required")
+    values = {
+        key: items[-1]
+        for key, items in urllib.parse.parse_qs((await request.body()).decode()).items()
+    }
+    storage = request.app.state.storage
+    grant_type = values.get("grant_type")
+    if grant_type == "authorization_code":
+        grant = _find_grant(storage, "authorization_code_hash", values.get("code", ""))
+        valid = bool(
+            grant
+            and grant["status"] == "active"
+            and grant["client_id"] == values.get("client_id")
+            and grant["redirect_uri"] == values.get("redirect_uri")
+            and datetime.fromisoformat(grant["authorization_code_expires_at"]) > _now()
+            and hmac.compare_digest(
+                grant["code_challenge"], _pkce_challenge(values.get("code_verifier", ""))
+            )
+        )
+    elif grant_type == "refresh_token":
+        grant = _find_grant(storage, "refresh_token_hash", values.get("refresh_token", ""))
+        valid = bool(
+            grant
+            and grant["status"] == "active"
+            and grant["client_id"] == values.get("client_id")
+            and datetime.fromisoformat(grant["refresh_token_expires_at"]) > _now()
+        )
+    else:
+        raise HTTPException(status_code=400, detail="unsupported_grant_type")
+    if not valid or grant is None:
+        raise HTTPException(status_code=401, detail="invalid_grant")
+    return JSONResponse(
+        _issue_tokens(storage, grant),
+        headers={"Cache-Control": "no-store", "Pragma": "no-cache"},
+    )
+
+
+def _bearer_grant(request: Request) -> dict:
+    authorization = request.headers.get("Authorization", "")
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="OAuth bearer token required")
+    grant = _find_grant(
+        request.app.state.storage, "access_token_hash", authorization[7:]
+    )
+    if (
+        grant is None
+        or grant["status"] != "active"
+        or datetime.fromisoformat(grant["access_token_expires_at"]) <= _now()
+    ):
+        raise HTTPException(status_code=401, detail="invalid or expired access token")
+    return grant
+
+
+def _accounting(storage, owner: str) -> dict:
+    return build_accounting_view(
+        storage.list_financial_records(owner, "transaction"),
+        storage.list_transaction_adjustments(owner),
+        storage.list_provider_record_versions(owner, "transaction"),
+    )
+
+
+def _summary(storage, owner: str) -> dict:
+    accounting = _accounting(storage, owner)
+    accounts = {
+        (item.get("connection_id"), item["account_id"]): item
+        for item in storage.list_financial_records(owner, "account")
+        if not item.get("removed")
+    }
+    balances: dict[tuple, dict] = {}
+    for item in storage.list_financial_records(owner, "balance"):
+        if item.get("removed"):
+            continue
+        key = (item.get("connection_id"), item["account_id"])
+        if key not in balances or item.get("observed_at", "") > balances[key].get("observed_at", ""):
+            balances[key] = item
+    cash = debt = investments = 0.0
+    for key, balance in balances.items():
+        account_type = accounts.get(key, {}).get("type")
+        value = float(balance.get("current") or 0)
+        if account_type == "depository":
+            cash += value
+        elif account_type == "credit":
+            debt += max(0, value)
+        elif account_type == "investment":
+            investments += value
+    assets = [item for item in storage.list_financial_records(owner, "household_asset") if not item.get("removed")]
+    asset_value = sum(float(item["valuation"]["amount"]) for item in assets)
+    debt += sum(float(item["ownership"]["debt_balance"]) for item in assets)
+    return {
+        "currency": "USD",
+        "metrics": {
+            "net_worth": round(cash + investments + asset_value - debt, 2),
+            "cash": round(cash, 2),
+            "known_debt": round(debt, 2),
+            "investment_value": round(investments, 2),
+            "income": accounting["metrics"]["income"],
+            "adjusted_personal_spending": accounting["metrics"]["finalized_spending"]["adjusted"],
+        },
+        "freshness": {
+            "balance_as_of": min((item.get("observed_at") for item in balances.values()), default=None),
+        },
+    }
+
+
+def _date_range(arguments: dict) -> tuple[date, date]:
+    try:
+        start = date.fromisoformat(str(arguments["start"]))
+        end = date.fromisoformat(str(arguments["end"]))
+    except (KeyError, ValueError) as error:
+        raise HTTPException(status_code=422, detail="start and end ISO dates are required") from error
+    if end < start or (end - start).days > 31:
+        raise HTTPException(status_code=422, detail="date range must be ordered and no longer than 31 days")
+    return start, end
+
+
+def _execute_tool(storage, owner: str, payload: ToolCall) -> tuple[dict, str, dict | None]:
+    accounting = _accounting(storage, owner)
+    if payload.tool == "finance.summary":
+        return _summary(storage, owner), "aggregate", None
+    if payload.tool == "finance.metric_definitions":
+        return {
+            "metrics": {
+                "net_worth": "Known assets minus known debts.",
+                "cash": "Latest connected depository balances.",
+                "adjusted_personal_spending": "Posted purchases after refunds and owner adjustments.",
+            }
+        }, "aggregate", None
+    if payload.tool == "finance.spending_breakdown":
+        return {"currency": "USD", "categories": accounting["metrics"]["spending_by_category"], "merchants_redacted": True}, "aggregate", None
+    if payload.tool == "finance.cash_flow_trend":
+        monthly: dict[str, float] = {}
+        for item in accounting["transactions"]:
+            if item["status"] != "posted":
+                continue
+            month = item["date"][:7]
+            direction = -1 if item["amount"] > 0 else 1
+            monthly[month] = round(monthly.get(month, 0) + direction * abs(item["amount"]), 2)
+        return {"currency": "USD", "monthly_net_cash_flow": monthly}, "aggregate", None
+    if payload.tool == "finance.investments.summary":
+        holdings = [item for item in storage.list_financial_records(owner, "holding") if not item.get("removed")]
+        return {"currency": "USD", "market_value": round(sum(float(item.get("institution_value") or 0) for item in holdings), 2), "position_count": len(holdings)}, "aggregate", None
+    if payload.tool == "finance.scenarios.list":
+        return {"scenarios": [_redact({key: value for key, value in item.items() if key != "output"}) for item in storage.list_scenarios(owner)]}, "private_scenario", None
+    if payload.tool == "finance.scenario.calculate":
+        calculator = payload.arguments.get("calculator")
+        inputs = payload.arguments.get("inputs", {})
+        try:
+            result = calculate_scenario(str(calculator), inputs)
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        return _redact(result), "calculated_scenario", None
+    if payload.tool == "finance.transactions.list":
+        start, end = _date_range(payload.arguments)
+        transactions = [
+            {key: item[key] for key in ("id", "date", "amount", "merchant_name", "accounting_type", "category")}
+            for item in accounting["transactions"]
+            if start <= date.fromisoformat(item["date"]) <= end
+        ]
+        date_range = {"start": start.isoformat(), "end": end.isoformat()}
+        return {"currency": "USD", "transactions": transactions}, "transaction_detail", date_range
+    raise HTTPException(status_code=404, detail="unknown Finance tool")
+
+
+@router.post("/mcp/tools/call")
+@router.post("/api/internal/mcp/finance/tools/call")
+def call_finance_tool(payload: ToolCall, request: Request) -> dict:
+    grant = _bearer_grant(request)
+    required_scope = TOOL_SCOPES.get(payload.tool)
+    if required_scope is None:
+        raise HTTPException(status_code=404, detail="unknown Finance tool")
+    storage = request.app.state.storage
+    audit_base = {
+        "action": "mcp.tool.called",
+        "resource_type": "mcp_tool",
+        "resource_id": payload.tool,
+        "grant_id": grant["id"],
+        "client_id": grant["client_id"],
+        "client_name": grant["client_name"],
+        "scope": required_scope,
+        "tool": payload.tool,
+        "occurred_at": _now().isoformat(),
+    }
+    if required_scope not in grant["scopes"]:
+        storage.append_audit(grant["owner"], {**audit_base, "outcome": "denied", "sensitivity": "not_returned", "date_range": None})
+        raise HTTPException(status_code=403, detail=f"scope {required_scope} required")
+    try:
+        data, sensitivity, date_range = _execute_tool(storage, grant["owner"], payload)
+    except HTTPException:
+        storage.append_audit(grant["owner"], {**audit_base, "outcome": "failure", "sensitivity": "not_returned", "date_range": {key: payload.arguments.get(key) for key in ("start", "end")} if "start" in payload.arguments or "end" in payload.arguments else None})
+        raise
+    storage.append_audit(grant["owner"], {**audit_base, "outcome": "success", "sensitivity": sensitivity, "date_range": date_range})
+    return {"tool": payload.tool, "sensitivity": sensitivity, "date_range": date_range, "data": _redact(data)}

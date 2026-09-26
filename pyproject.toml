@@ -1,0 +1,26 @@
+[project]
+name = "finance"
+version = "0.1.0"
+description = "Private household finance analytics and public planning calculators."
+requires-python = ">=3.12"
+dependencies = [
+  "cryptography>=50.0,<51",
+  "fastapi>=0.118,<1",
+  "PyJWT[crypto]>=2.10,<3",
+  "uvicorn>=0.37,<1",
+]
+
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["backend*"]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.4,<9",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

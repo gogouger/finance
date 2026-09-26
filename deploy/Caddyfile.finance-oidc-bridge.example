@@ -1,0 +1,50 @@
+# Target configuration only. Do not replace the fail-closed production
+# configuration until the capability checks in oidc-bridge.md pass.
+finance.gordongouger.com {
+	import tls_origin
+	import security_headers
+	encode gzip
+
+	@public {
+		path / /housing /retirement /health /ready /assets/* /api/public/*
+	}
+	handle @public {
+		reverse_proxy finance:8080
+	}
+
+	@oidc_browser {
+		path /oauth2/start /oauth2/callback /oauth2/logout /logged-out
+	}
+	handle @oidc_browser {
+		reverse_proxy finance-oidc-bridge:8081
+	}
+
+	handle {
+		# route preserves this exact order. Without it, Caddy normally sorts
+		# forward_auth ahead of request_header.
+		route {
+			# Remove all browser-supplied identity, method, freshness, and bridge
+			# control inputs before the authorization subrequest.
+			request_header -Remote-User
+			request_header -X-Forwarded-User
+			request_header -X-Auth-Method
+			request_header -X-Auth-Time
+			request_header -X-Auth-Require-Fresh
+
+			@fresh {
+				path /api/private/security/fresh-check /api/private/connections/plaid/* /api/private/lifecycle/* /api/private/mcp/grants* /api/private/payroll/approval /api/private/payroll/link-token /api/private/payroll/manual /api/private/investments/imports/*
+			}
+			request_header @fresh X-Auth-Require-Fresh true
+
+			forward_auth finance-oidc-bridge:8081 {
+				uri /oauth2/auth
+				header_up X-Auth-Require-Fresh {http.request.header.X-Auth-Require-Fresh}
+				copy_headers X-Forwarded-User X-Auth-Method X-Auth-Time
+			}
+
+			reverse_proxy finance:8080 {
+				header_up -Remote-User
+			}
+		}
+	}
+}

@@ -1,0 +1,19 @@
+# Merge these keys into the existing Authelia configuration.
+access_control:
+  rules:
+    - domain: 'finance.gordongouger.com'
+      policy: 'two_factor'
+
+webauthn:
+  enable_passkey_login: true
+  experimental_enable_passkey_uv_two_factors: true
+  display_name: 'Gordon Gouger'
+  attestation_conveyance_preference: 'none'
+  selection_criteria:
+    discoverability: 'required'
+    user_verification: 'required'
+
+session:
+  inactivity: '30m'
+  expiration: '12h'
+  remember_me: '12h'
