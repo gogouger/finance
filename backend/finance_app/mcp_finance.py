@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from .accounting import build_accounting_view
 from .auth import require_fresh_owner, require_owner
+from .classification import effective_classifications
 from .scenarios import calculate_scenario
 
 
@@ -303,10 +304,17 @@ def _bearer_grant(request: Request) -> dict:
 
 
 def _accounting(storage, owner: str) -> dict:
+    accounts = [
+        item
+        for item in storage.list_financial_records(owner, "account")
+        if not item.get("removed")
+    ]
     return build_accounting_view(
         storage.list_financial_records(owner, "transaction"),
         storage.list_transaction_adjustments(owner),
         storage.list_provider_record_versions(owner, "transaction"),
+        effective_classifications(storage, owner),
+        {item["account_id"] for item in accounts if item.get("type") == "credit"},
     )
 
 
@@ -324,25 +332,29 @@ def _summary(storage, owner: str) -> dict:
         key = (item.get("connection_id"), item["account_id"])
         if key not in balances or item.get("observed_at", "") > balances[key].get("observed_at", ""):
             balances[key] = item
-    cash = debt = investments = 0.0
+    cash = current_card_balance = investments = 0.0
     for key, balance in balances.items():
         account_type = accounts.get(key, {}).get("type")
         value = float(balance.get("current") or 0)
         if account_type == "depository":
             cash += value
         elif account_type == "credit":
-            debt += max(0, value)
+            current_card_balance += max(0, value)
         elif account_type == "investment":
             investments += value
     assets = [item for item in storage.list_financial_records(owner, "household_asset") if not item.get("removed")]
     asset_value = sum(float(item["valuation"]["amount"]) for item in assets)
-    debt += sum(float(item["ownership"]["debt_balance"]) for item in assets)
+    registered_asset_debt = sum(
+        float(item["ownership"]["debt_balance"]) for item in assets
+    )
+    liabilities = current_card_balance + registered_asset_debt
     return {
         "currency": "USD",
         "metrics": {
-            "net_worth": round(cash + investments + asset_value - debt, 2),
+            "net_worth": round(cash + investments + asset_value - liabilities, 2),
             "cash": round(cash, 2),
-            "known_debt": round(debt, 2),
+            "current_card_balance": round(current_card_balance, 2),
+            "registered_asset_debt": round(registered_asset_debt, 2),
             "investment_value": round(investments, 2),
             "income": accounting["metrics"]["income"],
             "adjusted_personal_spending": accounting["metrics"]["finalized_spending"]["adjusted"],
@@ -371,8 +383,10 @@ def _execute_tool(storage, owner: str, payload: ToolCall) -> tuple[dict, str, di
     if payload.tool == "finance.metric_definitions":
         return {
             "metrics": {
-                "net_worth": "Known assets minus known debts.",
+                "net_worth": "Known assets minus registered asset debt and the current card-balance snapshot.",
                 "cash": "Latest connected depository balances.",
+                "current_card_balance": "A transient provider-reported snapshot, not long-term debt.",
+                "registered_asset_debt": "Debt explicitly registered against a home or vehicle.",
                 "adjusted_personal_spending": "Posted purchases after refunds and owner adjustments.",
             }
         }, "aggregate", None
@@ -384,9 +398,14 @@ def _execute_tool(storage, owner: str, payload: ToolCall) -> tuple[dict, str, di
             if item["status"] != "posted":
                 continue
             month = item["date"][:7]
-            direction = -1 if item["amount"] > 0 else 1
-            monthly[month] = round(monthly.get(month, 0) + direction * abs(item["amount"]), 2)
-        return {"currency": "USD", "monthly_net_cash_flow": monthly}, "aggregate", None
+            monthly[month] = round(
+                monthly.get(month, 0) + item.get("cash_effect", 0), 2
+            )
+        return {
+            "currency": "USD",
+            "monthly_net_depository_movement": monthly,
+            "definition": "Posted bank-account credits minus debits; credit-card refunds, purchases, and payment receipts are excluded.",
+        }, "aggregate", None
     if payload.tool == "finance.investments.summary":
         holdings = [item for item in storage.list_financial_records(owner, "holding") if not item.get("removed")]
         return {"currency": "USD", "market_value": round(sum(float(item.get("institution_value") or 0) for item in holdings), 2), "position_count": len(holdings)}, "aggregate", None

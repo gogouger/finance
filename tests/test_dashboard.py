@@ -153,9 +153,9 @@ def test_owner_sees_explainable_metrics_from_normalized_records(
     assert values == {
         "net_worth": 509800,
         "cash": 10000,
-        "debt": 100200,
+        "debt": 100000,
         "income": 2000,
-        "raw_cash_flow": 1698,
+        "raw_cash_flow": 1748,
         "raw_spending": 402,
         "adjusted_personal_spending": 302,
         "true_monthly_cost": 0,
@@ -180,7 +180,10 @@ def test_owner_sees_explainable_metrics_from_normalized_records(
             "sources",
         }
 
-    assert dashboard["sections"]["cash_flow"]["net"] == 1698
+    assert dashboard["sections"]["cash_flow"]["net"] == 1748
+    assert dashboard["sections"]["cash_flow"]["depository_credits"] == 2500
+    assert dashboard["sections"]["cash_flow"]["refund_credits"] == 0
+    assert dashboard["sections"]["cash_flow"]["available"] is True
     assert dashboard["sections"]["adjusted_spending"]["value"] == 302
     assert dashboard["sections"]["adjusted_spending"]["excluded_from_personal"] == 100
     assert "not a budget target" in dashboard["sections"]["adjusted_spending"][

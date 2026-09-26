@@ -157,7 +157,14 @@ type DashboardResult = {
   reporting_period: { label: string; start: string; end: string };
   metrics: DashboardMetric[];
   sections: {
-    cash_flow: { inflows: number; outflows: number; net: number };
+    cash_flow: {
+      depository_credits: number;
+      depository_debits: number;
+      net: number;
+      refund_credits: number;
+      available: boolean;
+      context: string;
+    };
     adjusted_spending: {
       value: number;
       raw_purchase_outflows: number;
@@ -804,7 +811,7 @@ function Dashboard() {
   const headlineKeys = [
     "net_worth",
     "cash",
-    "debt",
+    "credit_card_liabilities",
     "income",
     "adjusted_personal_spending",
     "true_monthly_cost",
@@ -901,18 +908,17 @@ function Dashboard() {
               </div>
               <div className="flow-compare">
                 <article>
-                  <span>Raw cash flow · trailing 12 months</span>
+                  <span>Depository movement · trailing 12 months</span>
                   <strong>
-                    {money.format(dashboard.sections.cash_flow.net)}
+                    {dashboard.sections.cash_flow.available
+                      ? money.format(dashboard.sections.cash_flow.net)
+                      : "Not available yet"}
                   </strong>
-                  <p>
-                    {money.format(dashboard.sections.cash_flow.inflows)} in ·{" "}
-                    {money.format(dashboard.sections.cash_flow.outflows)} out
-                  </p>
-                  <small>
-                    Includes transfers and card payments because cash actually
-                    moved.
-                  </small>
+                  {dashboard.sections.cash_flow.available && <p>
+                    {money.format(dashboard.sections.cash_flow.depository_credits)} bank credits ·{" "}
+                    {money.format(dashboard.sections.cash_flow.depository_debits)} bank debits
+                  </p>}
+                  <small>{dashboard.sections.cash_flow.context}</small>
                 </article>
                 <article>
                   <span>Adjusted personal spending · trailing 12 months</span>

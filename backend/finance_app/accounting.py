@@ -177,8 +177,11 @@ def build_accounting_view(
     refunds = Decimal("0")
     adjusted_spending = Decimal("0")
     income = Decimal("0")
-    cash_inflows = Decimal("0")
-    cash_outflows = Decimal("0")
+    depository_credits = Decimal("0")
+    depository_debits = Decimal("0")
+    depository_refund_credits = Decimal("0")
+    card_refund_credits = Decimal("0")
+    card_payments = Decimal("0")
     spending_by_category: dict[str, Decimal] = {}
     for source in visible:
         pending = bool(source.get("pending"))
@@ -216,11 +219,19 @@ def build_accounting_view(
             else:
                 accounting_type = "neutral"
 
-        if not pending:
+        is_credit_account = source.get("account_id") in credit_account_ids
+        if not pending and not is_credit_account:
             if amount > 0:
-                cash_outflows += amount
+                depository_debits += amount
             elif amount < 0:
-                cash_inflows += -amount
+                depository_credits += -amount
+                if accounting_type == "refund":
+                    depository_refund_credits += -amount
+        elif not pending and is_credit_account:
+            if accounting_type == "refund":
+                card_refund_credits += -amount
+            elif accounting_type == "credit_card_payment":
+                card_payments += -amount
 
         category_source = original if original is not None and accounting_type == "refund" else source
         classification = classifications.get(category_source["transaction_id"])
@@ -260,6 +271,9 @@ def build_accounting_view(
             "id": source_id,
             "date": source["date"],
             "cash_flow_date": source["date"],
+            "cash_effect": _money(
+                -amount if not pending and not is_credit_account else 0
+            ),
             "merchant_name": (
                 classifications.get(source_id, {}).get("merchant_name")
                 or source.get("merchant_name")
@@ -300,9 +314,15 @@ def build_accounting_view(
             "provisional_spending": _money(provisional_spending),
             "income": _money(income),
             "cash_flow": {
-                "inflows": _money(cash_inflows),
-                "outflows": _money(cash_outflows),
-                "net": _money(cash_inflows - cash_outflows),
+                "depository_credits": _money(depository_credits),
+                "depository_debits": _money(depository_debits),
+                "net": _money(depository_credits - depository_debits),
+                "refund_credits": _money(depository_refund_credits),
+                "excludes_credit_accounts": True,
+            },
+            "credit_card_activity": {
+                "payments": _money(card_payments),
+                "refund_credits": _money(card_refund_credits),
             },
             "spending_by_category": {
                 category: _money(amount)

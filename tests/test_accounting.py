@@ -150,6 +150,17 @@ def test_unmatched_credit_card_payment_and_credit_are_not_income():
     assert by_id["payment"]["accounting_type"] == "credit_card_payment"
     assert by_id["refund"]["accounting_type"] == "refund"
     assert result["metrics"]["income"] == 0
+    assert result["metrics"]["cash_flow"] == {
+        "depository_credits": 0,
+        "depository_debits": 0,
+        "net": 0,
+        "refund_credits": 0,
+        "excludes_credit_accounts": True,
+    }
+    assert result["metrics"]["credit_card_activity"] == {
+        "payments": 500,
+        "refund_credits": 25,
+    }
 
 
 def _accounting(base_url: str) -> dict:
@@ -192,9 +203,11 @@ def test_transfers_and_card_payments_stay_visible_without_becoming_spending(
     assert accounting["metrics"]["income"] == 2000
     assert accounting["metrics"]["finalized_spending"]["raw"] == 402
     assert accounting["metrics"]["cash_flow"] == {
-        "inflows": 2800,
-        "outflows": 1102,
-        "net": 1698,
+        "depository_credits": 2500,
+        "depository_debits": 752,
+        "net": 1748,
+        "refund_credits": 0,
+        "excludes_credit_accounts": True,
     }
 
 
