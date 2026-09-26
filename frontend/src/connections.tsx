@@ -102,6 +102,7 @@ function PlaidLauncher({
             }),
           }),
         );
+        finished(`${metadata.institution.name} is connected. Its first records are importing in the background.`);
         let message = `${metadata.institution.name} is connected.`;
         try {
           await responseJson(
