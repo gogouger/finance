@@ -225,6 +225,31 @@ def test_three_editable_assumption_cases_cover_the_full_horizon():
     assert len({case["years"][-1]["buyer_net_wealth"] for case in cases}) == 3
 
 
+def test_sensitivity_changes_one_assumption_at_a_time_and_ranks_the_swing():
+    result = calculate_housing(
+        _inputs(
+            years=10,
+            monthly_rent=2_000,
+            mortgage_rate_percent=6,
+            home_appreciation_percent=3,
+            investment_return_percent=7,
+        )
+    )
+
+    sensitivity = result["sensitivity"]
+    assert [item["swing"] for item in sensitivity] == sorted(
+        (item["swing"] for item in sensitivity), reverse=True
+    )
+    appreciation = next(
+        item for item in sensitivity if item["field"] == "home_appreciation_percent"
+    )
+    assert appreciation["base"] == 3
+    assert appreciation["lower"]["assumption"] == 2
+    assert appreciation["higher"]["assumption"] == 4
+    assert appreciation["higher"]["buyer_advantage"] > appreciation["lower"]["buyer_advantage"]
+    assert all(item["unit"] == "percentage_points" for item in sensitivity)
+
+
 def test_general_inflation_escalates_recurring_costs_and_exposes_story_layers():
     result = calculate_housing(
         _inputs(

@@ -58,6 +58,7 @@ class HousingInputs(BaseModel):
     )
     include_case_comparison: bool = False
     assumption_cases: list[HousingAssumptionCase] | None = None
+    include_sensitivity: bool = True
 
     @model_validator(mode="after")
     def validate_financing(self):
@@ -629,4 +630,46 @@ def calculate_housing(inputs: HousingInputs) -> dict:
                 }
             )
         result["case_comparison"] = comparison
+    if inputs.include_sensitivity:
+        levers = [
+            ("home_appreciation_percent", "Home appreciation", 1, -20, 30),
+            ("rent_growth_percent", "Rent growth", 1, -20, 30),
+            ("investment_return_percent", "Investment return", 1, -50, 50),
+            ("mortgage_rate_percent", "Mortgage rate", 0.5, 0, 30),
+            ("maintenance_percent", "Maintenance", 0.5, 0, 20),
+        ]
+        sensitivity = []
+        for field, label, delta, minimum, maximum in levers:
+            base = float(getattr(inputs, field))
+            values = {
+                "lower": max(minimum, base - delta),
+                "higher": min(maximum, base + delta),
+            }
+            outcomes = {}
+            for direction, value in values.items():
+                comparison = calculate_housing(
+                    inputs.model_copy(
+                        update={
+                            field: value,
+                            "include_case_comparison": False,
+                            "assumption_cases": None,
+                            "include_sensitivity": False,
+                        }
+                    )
+                )
+                outcomes[direction] = comparison["years"][-1]["buyer_advantage"]
+            sensitivity.append(
+                {
+                    "field": field,
+                    "label": label,
+                    "unit": "percentage_points",
+                    "base": _money(base),
+                    "lower": {"assumption": _money(values["lower"]), "buyer_advantage": _money(outcomes["lower"])},
+                    "higher": {"assumption": _money(values["higher"]), "buyer_advantage": _money(outcomes["higher"])},
+                    "swing": _money(abs(outcomes["higher"] - outcomes["lower"])),
+                }
+            )
+        result["sensitivity"] = sorted(
+            sensitivity, key=lambda item: item["swing"], reverse=True
+        )
     return result

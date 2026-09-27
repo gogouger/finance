@@ -109,6 +109,15 @@ type Result = {
   years: Year[];
   crossover_years: number[];
   cost_escalation: Record<string, number>;
+  sensitivity: Array<{
+    field: string;
+    label: string;
+    unit: string;
+    base: number;
+    lower: { assumption: number; buyer_advantage: number };
+    higher: { assumption: number; buyer_advantage: number };
+    swing: number;
+  }>;
 };
 type RetirementInputs = {
   current_age: number;
@@ -853,7 +862,7 @@ function Housing() {
           </section>
         </div>
         <section className="housing-visual-sticky" aria-live="polite">
-          {result && final ? <HousingVisuals years={result.years} initialCash={result.initial_cash_allocation} stage={activeStage} /> : <p className="dashboard-loading">Building the comparison…</p>}
+          {result && final ? <HousingVisuals years={result.years} initialCash={result.initial_cash_allocation} sensitivity={result.sensitivity} stage={activeStage} /> : <p className="dashboard-loading">Building the comparison…</p>}
         </section>
       </form>
       {result && <details className="housing-accessible-results"><summary>Year-by-year accessible results and definitions</summary><p>Buyer wealth is sale proceeds after remaining debt and estimated sale costs. Renter wealth begins with avoided cash-to-close, then adds or withdraws the monthly cash-flow difference. Costs and growth assumptions compound monthly.</p><div className="table-wrap"><table><thead><tr><th>Year</th><th>Buy after sale</th><th>Rent + invest</th><th>Difference</th></tr></thead><tbody>{result.years.map((year) => <tr key={year.year}><td>{year.year}</td><td>{money.format(year.buyer_net_wealth)}</td><td>{money.format(year.renter_investments)}</td><td>{money.format(year.buyer_advantage)}</td></tr>)}</tbody></table></div></details>}
