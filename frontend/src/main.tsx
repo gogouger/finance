@@ -1077,6 +1077,73 @@ function NetWorthVisual({ dashboard }: { dashboard: DashboardResult }) {
   );
 }
 
+function NetWorthProjection({ dashboard }: { dashboard: DashboardResult }) {
+  const metrics = new Map(dashboard.metrics.map((metric) => [metric.key, metric.value]));
+  const currentNetWorth = metrics.get("net_worth") || 0;
+  const investedToday = metrics.get("investment_value") || 0;
+  const observedSurplus = dashboard.sections.cash_flow.available
+    ? dashboard.sections.cash_flow.operating_surplus
+    : 0;
+  const [years, setYears] = useState(10);
+  const [returnPercent, setReturnPercent] = useState(6.5);
+  const [annualSavings, setAnnualSavings] = useState(Math.round(observedSurplus / 100) * 100);
+  const annualReturn = returnPercent / 100;
+  const futureInvestments = investedToday * Math.pow(1 + annualReturn, years)
+    + annualSavings * (annualReturn === 0
+      ? years
+      : (Math.pow(1 + annualReturn, years) - 1) / annualReturn);
+  const futureNetWorth = currentNetWorth - investedToday + futureInvestments;
+  const points = Array.from({ length: years + 1 }, (_, year) => {
+    const investments = investedToday * Math.pow(1 + annualReturn, year)
+      + annualSavings * (annualReturn === 0
+        ? year
+        : (Math.pow(1 + annualReturn, year) - 1) / annualReturn);
+    return { year, value: currentNetWorth - investedToday + investments };
+  });
+  const max = Math.max(...points.map((point) => point.value), currentNetWorth, 1);
+  const min = Math.min(...points.map((point) => point.value), currentNetWorth, 0);
+  const range = max - min || 1;
+  const chartWidth = 780;
+  const chartHeight = 210;
+  const padding = { top: 18, right: 20, bottom: 30, left: 74 };
+  const chartPoint = (point: { year: number; value: number }) => {
+    const x = padding.left + (point.year / Math.max(years, 1)) * (chartWidth - padding.left - padding.right);
+    const y = padding.top + (chartHeight - padding.top - padding.bottom)
+      - ((point.value - min) / range) * (chartHeight - padding.top - padding.bottom);
+    return `${x},${y}`;
+  };
+  const resetToObserved = () => setAnnualSavings(Math.round(observedSurplus / 100) * 100);
+  return (
+    <section className="dashboard-panel net-worth-projection" aria-labelledby="net-worth-projection-heading">
+      <div className="section-title">
+        <div><p className="eyebrow">Looking forward</p><h2 id="net-worth-projection-heading">What could today’s saving rate become?</h2></div>
+        <strong>{money.format(futureNetWorth)}</strong>
+      </div>
+      <p className="quiet">A transparent scenario—not a prediction. It compounds tracked investments, adds the savings you choose, and holds today’s home, vehicles, cash, and liabilities flat.</p>
+      <div className="projection-controls">
+        <label>Years ahead <strong>{years}</strong><input aria-label="Years ahead" type="range" min="1" max="40" step="1" value={years} onChange={(event) => setYears(Number(event.target.value))} /></label>
+        <label>Annual investment return <strong>{returnPercent.toFixed(1)}%</strong><input aria-label="Annual investment return" type="range" min="0" max="10" step="0.25" value={returnPercent} onChange={(event) => setReturnPercent(Number(event.target.value))} /></label>
+        <label>Annual amount invested <strong>{money.format(annualSavings)}</strong><input aria-label="Annual amount invested" type="range" min="-50000" max="200000" step="500" value={annualSavings} onChange={(event) => setAnnualSavings(Number(event.target.value))} /></label>
+      </div>
+      <figure className="projection-chart">
+        <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} role="img" aria-label={`Projected household net worth in ${years} years: ${money.format(futureNetWorth)}`}>
+          {[0, .5, 1].map((fraction) => {
+            const value = max - range * fraction;
+            const y = padding.top + (chartHeight - padding.top - padding.bottom) * fraction;
+            return <g key={fraction}><line className="chart-grid" x1={padding.left} x2={chartWidth - padding.right} y1={y} y2={y} /><text className="chart-label" x={padding.left - 10} y={y + 4} textAnchor="end">{money.format(value)}</text></g>;
+          })}
+          <polyline points={points.map(chartPoint).join(" ")} className="net-worth-projection-line" />
+          <circle cx={chartPoint(points.at(-1)!).split(",")[0]} cy={chartPoint(points.at(-1)!).split(",")[1]} r="4" className="net-worth-projection-dot" />
+          <text className="chart-label" x={padding.left} y={chartHeight - 10}>Today</text>
+          <text className="chart-label" x={chartWidth - padding.right} y={chartHeight - 10} textAnchor="end">{years} years</text>
+        </svg>
+        <figcaption>Tracked investments: {money.format(investedToday)} today → {money.format(futureInvestments)}. {annualSavings === observedSurplus ? "The contribution rate matches your observed trailing-12-month operating surplus." : "The contribution rate is a scenario you set."}</figcaption>
+      </figure>
+      <div className="projection-summary"><span>{money.format(currentNetWorth)} today</span><i /><span>{money.format(futureNetWorth)} in {years} years</span><button type="button" onClick={resetToObserved}>Use observed saving rate</button></div>
+    </section>
+  );
+}
+
 function FinancialChangeStory({ dashboard }: { dashboard: DashboardResult }) {
   const story = dashboard.net_worth_change;
   const operating = story.drivers.find((driver) => driver.key === "operating_surplus")?.value || 0;
@@ -1561,6 +1628,7 @@ function Dashboard() {
             })}
           </section>
           <NetWorthVisual dashboard={dashboard} />
+          <NetWorthProjection dashboard={dashboard} />
           {investments && <InvestmentOverview data={investments} />}
           {assets?.assets.find((asset) => asset.kind === "home") && (
             <HomeOverview home={assets.assets.find((asset) => asset.kind === "home")!} />
