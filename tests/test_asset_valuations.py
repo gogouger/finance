@@ -8,6 +8,7 @@ import urllib.error
 import urllib.request
 from base64 import urlsafe_b64encode
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -16,6 +17,7 @@ from backend.finance_app.valuation_provider import (
     RentCastQuotaTracker,
     RentCastValuationProvider,
     ValuationProviderRateLimited,
+    VehicleDepreciationValuationProvider,
 )
 
 
@@ -146,6 +148,32 @@ def test_rentcast_tracker_counts_successes_and_stops_below_provider_allowance(
     assert "secret-never-persisted" not in usage_path.read_text()
     with pytest.raises(ValuationProviderRateLimited, match="no request was sent"):
         provider.fetch("home", {"address": "123 Private Lane, Castle Rock, CO"})
+
+
+def test_vehicle_model_refreshes_a_sourced_anchor_without_network_or_billing():
+    provider = VehicleDepreciationValuationProvider()
+    observed_at = datetime.now(UTC).isoformat()
+
+    estimate = provider.fetch(
+        "vehicle",
+        {
+            "valuation_anchor_amount": "19800",
+            "valuation_anchor_low": "18070",
+            "valuation_anchor_high": "20720",
+            "valuation_anchor_date": observed_at,
+            "annual_depreciation_percent": "7",
+            "valuation_reference_url": "https://example.com/reference",
+            "valuation_reference_terms_url": "https://example.com/terms",
+        },
+    )[0]
+
+    assert estimate["amount"] == 19800
+    assert estimate["estimate_type"] == "modelled_private_party_value"
+    assert estimate["estimate_range"] == {"low": 18070, "high": 20720}
+    assert estimate["confidence"]["level"] == "low"
+    assert estimate["assumptions"]["annual_depreciation_percent"] == 7
+    assert provider.terms()["network_requests"] == 0
+    assert "cannot create provider charges" in provider.terms()["billing_guard"]
 
 
 def test_refresh_records_conflicting_sourced_observations_without_overwriting_history(

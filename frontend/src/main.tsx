@@ -232,12 +232,24 @@ type HomeAsset = {
   id: string;
   kind: string;
   name: string;
+  identifiers?: Record<string, string>;
   purchase_price: number;
   valuation: { amount: number; source_label: string; valued_at: string };
+  effective_valuation?: {
+    amount: number;
+    source_label: string;
+    valued_at: string;
+    estimate_type?: string;
+    automated: boolean;
+    confidence?: { level?: string; basis?: string };
+  };
   ownership: { debt_balance: number; net_equity_after_sale: number };
   cost_summary: {
     annual_ownership_costs?: Record<string, number>;
     annual_ownership_total?: number;
+    annual_operating_costs?: Record<string, number>;
+    annual_operating_total?: number;
+    depreciation_to_date?: number | null;
   };
   valuation_automation?: {
     latest_estimates?: Array<{
@@ -990,6 +1002,48 @@ function HomeOverview({ home }: { home: HomeAsset }) {
   );
 }
 
+function VehicleOverview({ vehicles }: { vehicles: HomeAsset[] }) {
+  const total = vehicles.reduce(
+    (sum, vehicle) => sum + (vehicle.effective_valuation?.amount || vehicle.valuation.amount),
+    0,
+  );
+  return (
+    <section className="dashboard-panel vehicle-overview" aria-labelledby="vehicle-heading">
+      <div className="section-title">
+        <div><p className="eyebrow">Vehicles</p><h2 id="vehicle-heading">Current value and ownership cost</h2></div>
+        <strong>{money.format(total)}</strong>
+      </div>
+      <div className="vehicle-grid">
+        {vehicles.map((vehicle) => {
+          const estimate = vehicle.valuation_automation?.latest_estimates?.[0];
+          const effective = vehicle.effective_valuation || vehicle.valuation;
+          const identifiers = vehicle.identifiers || {};
+          const missing = [!identifiers.vin && "VIN", !identifiers.mileage && "current mileage"].filter(Boolean);
+          return (
+            <article key={vehicle.id}>
+              <div className="vehicle-title"><div><span>{identifiers.year} {identifiers.make}</span><h3>{vehicle.name}</h3></div><strong>{money.format(effective.amount)}</strong></div>
+              <p className="vehicle-trim">{identifiers.trim || "Trim not recorded"} · owned outright</p>
+              {estimate?.estimate_range && <div className="estimate-range"><i /><p>{money.format(estimate.estimate_range.low)} <span>model range</span> {money.format(estimate.estimate_range.high)}</p></div>}
+              <dl>
+                <div><dt>Value source</dt><dd>{effective.source_label}</dd></div>
+                <div><dt>As of</dt><dd>{new Date(effective.valued_at).toLocaleDateString()}</dd></div>
+                <div><dt>Known annual operating cost</dt><dd>{money.format(vehicle.cost_summary.annual_operating_total || 0)}</dd></div>
+                <div><dt>Recorded depreciation</dt><dd>{vehicle.cost_summary.depreciation_to_date == null ? "Purchase price needed" : money.format(vehicle.cost_summary.depreciation_to_date)}</dd></div>
+              </dl>
+              <p className={`vehicle-quality ${missing.length ? "needs-detail" : ""}`}>
+                {missing.length
+                  ? `Provisional value: add ${missing.join(" and ")} for a vehicle-specific live appraisal.`
+                  : "Vehicle identity and mileage are ready for a live appraisal provider."}
+              </p>
+            </article>
+          );
+        })}
+      </div>
+      <p className="visual-note">Current figures are private-party-value estimates, not guaranteed offers. Until VIN, mileage, condition, and a permitted live provider are connected, the monthly refresh applies the displayed depreciation model to dated market anchors.</p>
+    </section>
+  );
+}
+
 function Dashboard() {
   const [dashboard, setDashboard] = useState<DashboardResult | null>(null);
   const [investments, setInvestments] = useState<InvestmentResult | null>(null);
@@ -1013,7 +1067,18 @@ function Dashboard() {
       if (dashboardResult.status === "fulfilled") setDashboard(dashboardResult.value);
       else setError("The financial overview could not be loaded. Check connection health and try again.");
       if (investmentResult.status === "fulfilled") setInvestments(investmentResult.value);
-      if (assetResult.status === "fulfilled") setAssets(assetResult.value);
+      if (assetResult.status === "fulfilled") {
+        setAssets(assetResult.value);
+        void Promise.allSettled(
+          assetResult.value.assets.map((asset) =>
+            fetch(`/api/private/assets/${asset.id}/valuations/refresh`, { method: "POST" }),
+          ),
+        ).then(() =>
+          fetch("/api/private/assets")
+            .then((response) => response.ok ? response.json() as Promise<AssetsResult> : null)
+            .then((updated) => { if (updated) setAssets(updated); }),
+        );
+      }
     });
   }, []);
   const byKey = new Map(
@@ -1126,6 +1191,9 @@ function Dashboard() {
           {investments && <InvestmentOverview data={investments} />}
           {assets?.assets.find((asset) => asset.kind === "home") && (
             <HomeOverview home={assets.assets.find((asset) => asset.kind === "home")!} />
+          )}
+          {assets && assets.assets.some((asset) => asset.kind === "vehicle") && (
+            <VehicleOverview vehicles={assets.assets.filter((asset) => asset.kind === "vehicle")} />
           )}
           <div className="dashboard-columns">
             <section className="dashboard-panel">

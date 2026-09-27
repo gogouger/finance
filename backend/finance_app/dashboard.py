@@ -6,6 +6,7 @@ from statistics import median
 from fastapi import APIRouter, Request
 
 from .accounting import build_accounting_view
+from .assets import effective_asset_valuation
 from .auth import require_owner
 from .classification import effective_classifications
 from .investment_scope import is_custodial_account
@@ -296,7 +297,9 @@ def financial_dashboard(request: Request) -> dict:
         )
     ]
     retirement_value = sum(float(balance.get("current") or 0) for _, balance in retirement_rows)
-    household_asset_value = sum(float(item["valuation"]["amount"]) for item in assets)
+    household_asset_value = sum(
+        float(effective_asset_valuation(item)["amount"]) for item in assets
+    )
     asset_debt = sum(float(item["ownership"]["debt_balance"]) for item in assets)
     net_worth = (
         cash

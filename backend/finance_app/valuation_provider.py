@@ -163,6 +163,120 @@ class RentCastValuationProvider:
         }
 
 
+class VehicleDepreciationValuationProvider:
+    """Conservative automatic estimate derived from a dated market anchor.
+
+    This deliberately does not scrape consumer valuation sites.  It keeps a
+    sourced market comparison current between owner/API appraisals and makes
+    the modelling assumption explicit in every observation.
+    """
+
+    cache_seconds = 30 * 86400
+
+    def fetch(self, kind: str, identifiers: dict[str, str]) -> list[dict[str, Any]]:
+        if kind != "vehicle":
+            raise ValuationProviderUnavailable(
+                "the depreciation model is configured only for vehicle valuations"
+            )
+        try:
+            anchor_amount = float(identifiers["valuation_anchor_amount"])
+            anchor_date = datetime.fromisoformat(
+                identifiers["valuation_anchor_date"].replace("Z", "+00:00")
+            )
+            annual_rate = float(identifiers["annual_depreciation_percent"]) / 100
+        except (KeyError, TypeError, ValueError) as error:
+            raise ValuationProviderUnavailable(
+                "vehicle valuation requires a dated market anchor and annual depreciation assumption"
+            ) from error
+        if anchor_date.tzinfo is None:
+            raise ValuationProviderUnavailable(
+                "vehicle valuation anchor date must include a timezone"
+            )
+        if anchor_amount < 0 or not 0 <= annual_rate < 1:
+            raise ValuationProviderUnavailable(
+                "vehicle valuation anchor or depreciation assumption is invalid"
+            )
+
+        observed = datetime.now(UTC)
+        elapsed_years = max(0.0, (observed - anchor_date.astimezone(UTC)).total_seconds() / 31_556_952)
+        decay = (1 - annual_rate) ** elapsed_years
+        amount = round(anchor_amount * decay, 2)
+        low = identifiers.get("valuation_anchor_low")
+        high = identifiers.get("valuation_anchor_high")
+        estimate_range = None
+        if low is not None and high is not None:
+            try:
+                estimate_range = {
+                    "low": round(float(low) * decay, 2),
+                    "high": round(float(high) * decay, 2),
+                }
+            except (TypeError, ValueError):
+                estimate_range = None
+        source_url = identifiers.get("valuation_reference_url", "")
+        return [
+            {
+                "amount": amount,
+                "currency": "USD",
+                "estimate_type": "modelled_private_party_value",
+                "effective_at": observed.isoformat(),
+                "observed_at": observed.isoformat(),
+                **({"estimate_range": estimate_range} if estimate_range else {}),
+                "source": {
+                    "id": "vehicle-depreciation-model",
+                    "label": "Modelled private-party value",
+                    "url": source_url,
+                    "terms_url": identifiers.get(
+                        "valuation_reference_terms_url", source_url
+                    ),
+                },
+                "confidence": {
+                    "level": "low",
+                    "score": 0.45,
+                    "basis": (
+                        "dated public market comparison decayed by an explicit annual rate; "
+                        "mileage, condition, options, and local offers are not yet verified"
+                    ),
+                },
+                "assumptions": {
+                    "anchor_amount": anchor_amount,
+                    "anchor_date": anchor_date.isoformat(),
+                    "annual_depreciation_percent": round(annual_rate * 100, 4),
+                },
+            }
+        ]
+
+    def terms(self) -> dict[str, Any]:
+        return {
+            "respected": True,
+            "mode": "vehicle_depreciation_model",
+            "cache_seconds": self.cache_seconds,
+            "network_requests": 0,
+            "billing_guard": "This model makes no paid API calls and cannot create provider charges.",
+        }
+
+
+class RoutedValuationProvider:
+    cache_seconds = 30 * 86400
+
+    def __init__(self, home_provider: Any, vehicle_provider: Any):
+        self._providers = {"home": home_provider, "vehicle": vehicle_provider}
+
+    def fetch(self, kind: str, identifiers: dict[str, str]) -> list[dict[str, Any]]:
+        provider = self._providers.get(kind)
+        if provider is None:
+            raise ValuationProviderUnavailable(f"unsupported asset kind: {kind}")
+        return provider.fetch(kind, identifiers)
+
+    def terms(self) -> dict[str, Any]:
+        terms = {kind: provider.terms() for kind, provider in self._providers.items()}
+        return {
+            "respected": all(item.get("respected") is True for item in terms.values()),
+            "mode": "routed",
+            "providers": terms,
+            "cache_seconds": self.cache_seconds,
+        }
+
+
 class DisabledValuationProvider:
     cache_seconds = 86400
 
@@ -354,16 +468,17 @@ def create_valuation_provider():
     mode = os.environ.get("VALUATION_MODE", "disabled").strip().lower()
     if mode == "fake":
         return FakeValuationProvider()
+    home_provider: Any = DisabledValuationProvider()
     if mode == "douglas_county_public_data":
         try:
-            return DouglasCountyPublicDataProvider(
+            home_provider = DouglasCountyPublicDataProvider(
                 terms_url=os.environ["VALUATION_SOURCE_TERMS_URL"],
                 accepted_at=os.environ["VALUATION_SOURCE_TERMS_ACCEPTED_AT"],
                 user_agent=os.environ["VALUATION_SOURCE_USER_AGENT"],
             )
         except (KeyError, ValueError):
-            return DisabledValuationProvider()
-    if mode == "rentcast":
+            home_provider = DisabledValuationProvider()
+    elif mode == "rentcast":
         try:
             credentials_file = os.environ["RENTCAST_CREDENTIALS_FILE"]
             key_file = os.environ["RENTCAST_CREDENTIALS_KEY_FILE"]
@@ -376,7 +491,7 @@ def create_valuation_provider():
             limit = int(os.environ.get("RENTCAST_MONTHLY_APP_LIMIT", "45"))
             if not 1 <= limit <= 50:
                 raise ValueError("invalid app limit")
-            return RentCastValuationProvider(
+            home_provider = RentCastValuationProvider(
                 api_key,
                 RentCastQuotaTracker(
                     os.environ.get(
@@ -386,5 +501,13 @@ def create_valuation_provider():
                 ),
             )
         except (KeyError, OSError, InvalidToken, ValueError, TypeError, json.JSONDecodeError):
-            return DisabledValuationProvider()
-    return DisabledValuationProvider()
+            home_provider = DisabledValuationProvider()
+    vehicle_mode = os.environ.get(
+        "VEHICLE_VALUATION_MODE", "depreciation_model"
+    ).strip().lower()
+    vehicle_provider: Any = (
+        VehicleDepreciationValuationProvider()
+        if vehicle_mode == "depreciation_model"
+        else DisabledValuationProvider()
+    )
+    return RoutedValuationProvider(home_provider, vehicle_provider)

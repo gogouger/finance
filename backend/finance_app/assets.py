@@ -39,6 +39,32 @@ def _observation_with_freshness(observation: dict) -> dict:
     return rendered
 
 
+def effective_asset_valuation(asset: dict) -> dict:
+    """Return the latest usable automated estimate, else the registered value."""
+    estimates = asset.get("valuation_automation", {}).get("latest_estimates", [])
+    market_estimates = [
+        item
+        for item in estimates
+        if item.get("estimate_type")
+        in {"market_value", "modelled_private_party_value"}
+        and isinstance(item.get("amount"), (int, float))
+    ]
+    if market_estimates:
+        latest = max(
+            market_estimates,
+            key=lambda item: item.get("observed_at", item.get("effective_at", "")),
+        )
+        return {
+            "amount": latest["amount"],
+            "valued_at": latest.get("effective_at") or latest["observed_at"],
+            "source_label": latest.get("source", {}).get("label", "Automated estimate"),
+            "estimate_type": latest.get("estimate_type"),
+            "confidence": latest.get("confidence"),
+            "automated": True,
+        }
+    return {**asset["valuation"], "automated": False}
+
+
 class Ownership(BaseModel):
     owned_outright: bool
     debt_balance: float = Field(default=0, ge=0)
@@ -127,7 +153,8 @@ class CostLinkUpdate(BaseModel):
 
 
 def _render(asset: dict) -> dict:
-    value = Decimal(str(asset["valuation"]["amount"]))
+    effective_valuation = effective_asset_valuation(asset)
+    value = Decimal(str(effective_valuation["amount"]))
     debt = Decimal(str(asset["ownership"]["debt_balance"]))
     selling_cost = value * Decimal(str(asset["selling_cost_percent"])) / Decimal("100")
     annual_costs = {
@@ -137,6 +164,7 @@ def _render(asset: dict) -> dict:
     rendered = {
         **asset,
         "valuation": {"currency": "USD", **asset["valuation"]},
+        "effective_valuation": {"currency": "USD", **effective_valuation},
         "ownership": {
             **asset["ownership"],
             "gross_equity": _money(value - debt),
@@ -167,9 +195,12 @@ def _render(asset: dict) -> dict:
         Decimal(str(item["amount"])) for item in asset.get("cost_links", [])
     )
     if asset["kind"] == "vehicle":
+        purchase_price = Decimal(str(asset["purchase_price"]))
         rendered["cost_summary"] = {
-            "depreciation_to_date": _money(
-                max(Decimal("0"), Decimal(str(asset["purchase_price"])) - value)
+            "depreciation_to_date": (
+                _money(max(Decimal("0"), purchase_price - value))
+                if purchase_price > 0
+                else None
             ),
             "annual_operating_costs": annual_costs,
             "annual_operating_total": _money(sum(annual_costs.values())),
