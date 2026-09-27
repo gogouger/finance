@@ -208,6 +208,21 @@ type InvestmentAccountSummary = {
   basis_coverage_percent: number;
   unrealized_gain_on_known_basis: number;
   unrealized_gain_percent: number | null;
+  observed_activity: {
+    start: string | null;
+    end: string | null;
+    contributions: number;
+    withdrawals: number;
+    dividends_and_interest: number;
+    definition: string;
+  };
+  performance_tracking: {
+    status: "available" | "collecting_history";
+    valuation_points: number;
+    start: string | null;
+    end: string | null;
+    definition: string;
+  };
   estimated_federal_tax_if_sold: {
     gain_subject_to_scenario: number;
     at_0_percent: number;
@@ -225,11 +240,22 @@ type InvestmentHolding = {
   ownership_scope: "household" | "custodial";
   institution_value: number | null;
   cost_basis: number | null;
+  analytics: {
+    account_weight_percent: number;
+    household_weight_percent: number;
+    unrealized_gain: number | null;
+    unrealized_gain_percent: number | null;
+  };
 };
 type InvestmentResult = {
   summary: {
     household_market_value: number;
     household_position_count: number;
+    known_cost_basis: number;
+    known_basis_market_value: number;
+    basis_coverage_percent: number;
+    unrealized_gain_on_known_basis: number;
+    unrealized_gain_percent: number | null;
     custodial_market_value: number;
     custodial_position_count: number;
     custodial_definition: string;
@@ -946,13 +972,21 @@ function InvestmentOverview({ data }: { data: InvestmentResult }) {
   return (
     <section className="dashboard-panel investment-overview" aria-labelledby="investment-heading">
       <div className="section-title">
-        <div><p className="eyebrow">Investments</p><h2 id="investment-heading">Performance and tax exposure</h2></div>
+        <div><p className="eyebrow">Investments</p><h2 id="investment-heading">What you own and how it has done</h2></div>
         <strong>{money.format(data.summary.household_market_value)}</strong>
       </div>
-      <p className="visual-note">“Gain” below is current value minus known cost basis—not total return. Dividends, fees, and positions without basis are not silently guessed.</p>
+      <div className="investment-summary-grid">
+        <article><span>Household investments</span><strong>{money.format(data.summary.household_market_value)}</strong><small>{data.summary.household_position_count} positions · children’s custodial accounts excluded</small></article>
+        <article><span>Gain on known basis</span><strong className={data.summary.unrealized_gain_on_known_basis < 0 ? "negative" : "positive"}>{money.format(data.summary.unrealized_gain_on_known_basis)}{data.summary.unrealized_gain_percent !== null ? ` · ${data.summary.unrealized_gain_percent.toFixed(1)}%` : ""}</strong><small>Current value minus basis for covered positions</small></article>
+        <article><span>Basis coverage</span><strong>{data.summary.basis_coverage_percent.toFixed(1)}%</strong><small>{money.format(data.summary.known_basis_market_value)} of current value has known basis</small></article>
+      </div>
+      <p className="visual-note">Basis gain is not the same as annualized performance. It does not fully account for the timing of deposits, withdrawals, dividends, or fees. Nightly valuations are now building the history needed for proper time-weighted returns.</p>
       <div className="account-performance-list">
-        {householdAccounts.map((account) => (
-          <article key={account.account_id}>
+        {householdAccounts.map((account) => {
+          const accountHoldings = householdHoldings
+            .filter((holding) => holding.account_id === account.account_id)
+            .sort((a, b) => (b.institution_value || 0) - (a.institution_value || 0));
+          return <article key={account.account_id}>
             <div className="account-row-head">
               <div><h3>{account.name}</h3><span>{treatment[account.tax_treatment]} · {account.position_count} positions</span></div>
               <strong>{money.format(account.market_value)}</strong>
@@ -963,18 +997,27 @@ function InvestmentOverview({ data }: { data: InvestmentResult }) {
               <span>Basis coverage <strong>{account.basis_coverage_percent.toFixed(0)}%</strong></span>
               <span>Illustrative federal tax at 15% <strong>{account.tax_treatment === "taxable" ? money.format(account.estimated_federal_tax_if_sold.at_15_percent) : "Not currently realized"}</strong></span>
             </div>
+            <div className="account-activity-grid">
+              <span>Observed contributions<strong>{money.format(account.observed_activity.contributions)}</strong></span>
+              <span>Observed withdrawals<strong>{money.format(account.observed_activity.withdrawals)}</strong></span>
+              <span>Observed dividends / interest<strong>{money.format(account.observed_activity.dividends_and_interest)}</strong></span>
+            </div>
+            <details className="position-details">
+              <summary>See {account.position_count} positions and individual gains</summary>
+              <div className="position-list">
+                {accountHoldings.map((holding) => {
+                  const gain = holding.analytics.unrealized_gain;
+                  return <div key={`${holding.account_id}-${holding.security_id}`}>
+                    <span><strong>{holding.ticker_symbol || holding.security_name || "Investment"}</strong><small>{holding.security_name} · {holding.analytics.account_weight_percent.toFixed(1)}% of account</small></span>
+                    <span>{money.format(holding.institution_value || 0)}<small>{gain === null ? "Basis unavailable" : `${gain >= 0 ? "+" : ""}${money.format(gain)} · ${holding.analytics.unrealized_gain_percent?.toFixed(1)}% vs. basis`}</small></span>
+                  </div>;
+                })}
+              </div>
+            </details>
+            <p className="performance-status">{account.performance_tracking.definition}{account.observed_activity.start ? ` Activity history currently begins ${new Date(`${account.observed_activity.start}T00:00:00`).toLocaleDateString()}.` : ""}</p>
           </article>
-        ))}
+        })}
       </div>
-      <details className="position-details">
-        <summary>See every household position</summary>
-        <div className="position-list">
-          {householdHoldings.sort((a, b) => (b.institution_value || 0) - (a.institution_value || 0)).map((holding) => {
-            const gain = holding.cost_basis === null ? null : (holding.institution_value || 0) - holding.cost_basis;
-            return <div key={`${holding.account_id}-${holding.security_id}`}><span><strong>{holding.ticker_symbol || holding.security_name || "Investment"}</strong><small>{holding.security_name}</small></span><span>{money.format(holding.institution_value || 0)}<small>{gain === null ? "Basis unavailable" : `${gain >= 0 ? "+" : ""}${money.format(gain)} vs. basis`}</small></span></div>;
-          })}
-        </div>
-      </details>
       <div className="tax-explainer">
         <strong>Tax estimate boundaries</strong>
         <p>Taxable accounts use 0%, 15%, and 23.8% federal long-term-gain scenarios only. Retirement trades generally do not create a current capital-gains bill; future traditional-account distributions are generally taxable, while qualified Roth distributions are generally tax-free. State tax, holding period, income brackets, loss netting, and missing basis still need tax-return data.</p>

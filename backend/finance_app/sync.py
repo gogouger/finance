@@ -130,22 +130,26 @@ def sync_connection(request: Request, connection: dict) -> dict:
                     f"{holding['account_id']}:{holding['security_id']}",
                     normalized_holding,
                 )
-        valuations = investments.get("valuation_history") or [
-            {
-                "date": timestamp[:10],
-                "value": sum(
-                    float(holding.get("institution_value") or 0)
-                    for holding in investments.get("holdings", [])
-                    if holding.get("iso_currency_code") == "USD"
-                ),
-            }
-        ]
+        valuations = investments.get("valuation_history") or []
+        if not valuations:
+            values_by_account: dict[str, float] = {}
+            for holding in investments.get("holdings", []):
+                if holding.get("iso_currency_code") != "USD":
+                    continue
+                account_id = holding["account_id"]
+                values_by_account[account_id] = values_by_account.get(account_id, 0) + float(
+                    holding.get("institution_value") or 0
+                )
+            valuations = [
+                {"date": timestamp[:10], "value": value, "account_id": account_id}
+                for account_id, value in values_by_account.items()
+            ]
         for valuation in valuations:
             storage.upsert_financial_record(
                 owner,
                 connection_id,
                 "investment_valuation",
-                f"{connection_id}:{valuation['date']}:{valuation.get('timing', 'close')}",
+                f"{connection_id}:{valuation.get('account_id', 'portfolio')}:{valuation['date']}:{valuation.get('timing', 'close')}",
                 {**valuation, "connection_id": connection_id, "currency": "USD"},
             )
         for symbol, observations in investments.get("benchmarks", {}).items():

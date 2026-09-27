@@ -158,6 +158,13 @@ def investment_positions(request: Request) -> dict:
         }
         for item in _active_records(storage, owner, "investment_activity")
     ]
+    activities_by_account: dict[str, list[dict]] = {}
+    for item in activities:
+        activities_by_account.setdefault(item.get("account_id", ""), []).append(item)
+    account_valuations: dict[str, list[dict]] = {}
+    for item in _active_records(storage, owner, "investment_valuation"):
+        if item.get("account_id"):
+            account_valuations.setdefault(item["account_id"], []).append(item)
     household_holdings = [
         item for item in holdings if item["ownership_scope"] == "household"
     ]
@@ -165,16 +172,37 @@ def investment_positions(request: Request) -> dict:
         item for item in holdings if item["ownership_scope"] == "custodial"
     ]
     account_summaries = []
+    account_market_values: dict[str, float] = {}
     for account_id in sorted({item["account_id"] for item in holdings}):
         account = accounts_by_id.get(account_id, {})
         account_holdings = [item for item in holdings if item["account_id"] == account_id]
         market_value = sum(float(item.get("institution_value") or 0) for item in account_holdings)
+        account_market_values[account_id] = market_value
         known_basis_holdings = [item for item in account_holdings if item.get("cost_basis") is not None]
         known_basis_value = sum(float(item.get("institution_value") or 0) for item in known_basis_holdings)
         known_basis = sum(float(item["cost_basis"]) for item in known_basis_holdings)
         unrealized_gain = known_basis_value - known_basis
         treatment = _tax_treatment(account)
         taxable_gain = max(0, unrealized_gain) if treatment == "taxable" else 0
+        account_activity = activities_by_account.get(account_id, [])
+        activity_dates = sorted(item["date"] for item in account_activity if item.get("date"))
+        valuation_dates = sorted(
+            {item["date"] for item in account_valuations.get(account_id, []) if item.get("date")}
+        )
+
+        def received_cash(subtypes: set[str]) -> float:
+            return sum(
+                abs(float(item.get("amount") or 0))
+                for item in account_activity
+                if item.get("subtype") in subtypes
+            )
+
+        def paid_cash(subtypes: set[str]) -> float:
+            return sum(
+                abs(float(item.get("amount") or 0))
+                for item in account_activity
+                if item.get("subtype") in subtypes
+            )
         account_summaries.append(
             {
                 "account_id": account_id,
@@ -189,6 +217,25 @@ def investment_positions(request: Request) -> dict:
                 "basis_coverage_percent": round(100 * known_basis_value / market_value, 1) if market_value else 0,
                 "unrealized_gain_on_known_basis": _money(unrealized_gain),
                 "unrealized_gain_percent": round(100 * unrealized_gain / known_basis, 1) if known_basis else None,
+                "observed_activity": {
+                    "start": activity_dates[0] if activity_dates else None,
+                    "end": activity_dates[-1] if activity_dates else None,
+                    "contributions": _money(received_cash({"deposit", "contribution"})),
+                    "withdrawals": _money(paid_cash({"withdrawal"})),
+                    "dividends_and_interest": _money(received_cash({"dividend", "interest"})),
+                    "definition": "Activity visible in the connected provider history; it may not cover the life of the account.",
+                },
+                "performance_tracking": {
+                    "status": "available" if len(valuation_dates) >= 2 else "collecting_history",
+                    "valuation_points": len(valuation_dates),
+                    "start": valuation_dates[0] if valuation_dates else None,
+                    "end": valuation_dates[-1] if valuation_dates else None,
+                    "definition": (
+                        "Multiple account-level valuation snapshots are available for return calculations."
+                        if len(valuation_dates) >= 2
+                        else "Nightly account-level snapshots are being collected. Until enough history exists, cost-basis gain is shown instead of a time-weighted return."
+                    ),
+                },
                 "estimated_federal_tax_if_sold": {
                     "gain_subject_to_scenario": _money(taxable_gain),
                     "at_0_percent": 0,
@@ -206,11 +253,43 @@ def investment_positions(request: Request) -> dict:
             }
         )
     account_summaries.sort(key=lambda item: item["market_value"], reverse=True)
+    household_market_value = sum(
+        float(item.get("institution_value") or 0) for item in household_holdings
+    )
+    household_known_basis_holdings = [
+        item for item in household_holdings if item.get("cost_basis") is not None
+    ]
+    household_known_basis = sum(float(item["cost_basis"]) for item in household_known_basis_holdings)
+    household_known_basis_value = sum(
+        float(item.get("institution_value") or 0) for item in household_known_basis_holdings
+    )
+    for holding in holdings:
+        market_value = float(holding.get("institution_value") or 0)
+        account_value = account_market_values.get(holding["account_id"], 0)
+        basis = holding.get("cost_basis")
+        gain = None if basis is None else market_value - float(basis)
+        holding["analytics"] = {
+            "account_weight_percent": round(100 * market_value / account_value, 1) if account_value else 0,
+            "household_weight_percent": (
+                round(100 * market_value / household_market_value, 1)
+                if household_market_value and holding["ownership_scope"] == "household"
+                else 0
+            ),
+            "unrealized_gain": None if gain is None else _money(gain),
+            "unrealized_gain_percent": (
+                None if gain is None or not float(basis) else round(100 * gain / float(basis), 1)
+            ),
+        }
     return {
         "currency": "USD",
         "summary": {
-            "household_market_value": _money(sum(float(item.get("institution_value") or 0) for item in household_holdings)),
+            "household_market_value": _money(household_market_value),
             "household_position_count": len(household_holdings),
+            "known_cost_basis": _money(household_known_basis),
+            "known_basis_market_value": _money(household_known_basis_value),
+            "basis_coverage_percent": round(100 * household_known_basis_value / household_market_value, 1) if household_market_value else 0,
+            "unrealized_gain_on_known_basis": _money(household_known_basis_value - household_known_basis),
+            "unrealized_gain_percent": round(100 * (household_known_basis_value - household_known_basis) / household_known_basis, 1) if household_known_basis else None,
             "custodial_market_value": _money(sum(float(item.get("institution_value") or 0) for item in custodial_holdings)),
             "custodial_position_count": len(custodial_holdings),
             "custodial_definition": "UTMA and UGMA assets belong to their child beneficiaries and are excluded from household totals.",
@@ -237,7 +316,19 @@ def investment_performance(
     storage = request.app.state.storage
 
     valuation_totals: dict[tuple[str, str], float] = {}
-    for item in _active_records(storage, owner, "investment_valuation"):
+    valuation_records = _active_records(storage, owner, "investment_valuation")
+    account_records = [item for item in valuation_records if item.get("account_id")]
+    if account_records:
+        accounts = {
+            item["account_id"]: item
+            for item in _active_records(storage, owner, "account")
+        }
+        valuation_records = [
+            item
+            for item in account_records
+            if ownership_scope(accounts.get(item.get("account_id"))) == "household"
+        ]
+    for item in valuation_records:
         if start <= date.fromisoformat(item["date"]) <= end:
             key = (item["date"], item.get("timing", "close"))
             valuation_totals[key] = valuation_totals.get(key, 0) + float(

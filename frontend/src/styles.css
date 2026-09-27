@@ -688,6 +688,11 @@ footer {
 .wealth-breakdown .liability-row i { background: #e6ad9c; }
 .wealth-breakdown .liability-row strong { color: #e6ad9c; }
 .visual-note { margin: 18px 0 0; color: #9fb2a7; font-size: .76rem; line-height: 1.55; }
+.investment-summary-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; margin-top: 24px; }
+.investment-summary-grid article { padding: 17px; border: 1px solid rgba(231,245,235,.1); background: rgba(7,19,15,.35); }
+.investment-summary-grid span,.investment-summary-grid small { display: block; color: #82988c; font-size: .68rem; line-height: 1.4; }
+.investment-summary-grid strong { display: block; margin: 7px 0 4px; color: #dcebe2; font-family: Georgia,"Times New Roman",serif; font-size: 1.25rem; font-weight: 400; }
+.investment-summary-grid .positive { color: #83d7ad; }.investment-summary-grid .negative { color: #e6ad9c; }
 
 .account-performance-list { display: grid; gap: 12px; margin-top: 24px; }
 .account-performance-list article { padding: 19px; background: rgba(131,215,173,.045); }
@@ -701,6 +706,9 @@ footer {
 .account-stats span { color: #82988c; font-size: .68rem; line-height: 1.4; }
 .account-stats strong { display: block; margin-top: 4px; color: #dcebe2; font-size: .78rem; }
 .account-stats .positive { color: #83d7ad; }.account-stats .negative { color: #e6ad9c; }
+.account-activity-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 14px; margin-top: 15px; padding-top: 14px; border-top: 1px solid rgba(231,245,235,.08); }
+.account-activity-grid span { color: #82988c; font-size: .68rem; }.account-activity-grid strong { display: block; margin-top: 4px; color: #dcebe2; font-size: .78rem; }
+.performance-status { margin: 13px 0 0; color: #82988c; font-size: .68rem; line-height: 1.5; }
 .position-details { margin-top: 20px; padding-top: 16px; border-top: 1px solid rgba(231,245,235,.1); }
 .position-details summary { color: #83d7ad; cursor: pointer; font-size: .78rem; }
 .position-list { max-height: 390px; margin-top: 14px; padding-right: 8px; overflow: auto; scrollbar-color: #4f9f79 rgba(231,245,235,.06); }
@@ -764,7 +772,7 @@ footer {
     grid-template-columns: 1fr;
   }
   .wealth-layout,.home-value-grid { grid-template-columns: 1fr; }
-  .account-stats { grid-template-columns: 1fr; }
+  .account-stats,.account-activity-grid,.investment-summary-grid { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 520px) {

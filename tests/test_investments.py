@@ -150,6 +150,11 @@ def test_investment_sync_is_idempotent_and_never_invents_cost_basis(
     assert positions["summary"] == {
         "household_market_value": 1760,
         "household_position_count": 2,
+        "known_cost_basis": 900,
+        "known_basis_market_value": 1200,
+        "basis_coverage_percent": 68.2,
+        "unrealized_gain_on_known_basis": 300,
+        "unrealized_gain_percent": 33.3,
         "custodial_market_value": 0,
         "custodial_position_count": 0,
         "custodial_definition": "UTMA and UGMA assets belong to their child beneficiaries and are excluded from household totals.",
@@ -164,6 +169,15 @@ def test_investment_sync_is_idempotent_and_never_invents_cost_basis(
     assert account_summary["basis_coverage_percent"] == 68.2
     assert account_summary["unrealized_gain_on_known_basis"] == 300
     assert account_summary["unrealized_gain_percent"] == 33.3
+    assert account_summary["observed_activity"] == {
+        "start": "2025-06-30",
+        "end": "2025-10-31",
+        "contributions": 500,
+        "withdrawals": 100,
+        "dividends_and_interest": 40,
+        "definition": "Activity visible in the connected provider history; it may not cover the life of the account.",
+    }
+    assert account_summary["performance_tracking"]["status"] == "collecting_history"
     assert account_summary["estimated_federal_tax_if_sold"]["at_15_percent"] == 45
     assert positions["freshness"][connection["id"]]["holdings"]
     holdings = {holding["ticker_symbol"]: holding for holding in positions["holdings"]}
@@ -172,6 +186,12 @@ def test_investment_sync_is_idempotent_and_never_invents_cost_basis(
     assert holdings["TOTAL"]["cost_basis_as_of"] == "2025-12-31"
     assert holdings["BOND"]["cost_basis_status"] == "missing"
     assert holdings["BOND"]["cost_basis"] is None
+    assert holdings["TOTAL"]["analytics"] == {
+        "account_weight_percent": 68.2,
+        "household_weight_percent": 68.2,
+        "unrealized_gain": 300,
+        "unrealized_gain_percent": 33.3,
+    }
     assert all(item["ownership_scope"] == "household" for item in positions["holdings"])
     assert all(item["ownership_scope"] == "household" for item in positions["activities"])
 
