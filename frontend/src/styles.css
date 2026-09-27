@@ -712,8 +712,10 @@ footer {
 .position-details { margin-top: 20px; padding-top: 16px; border-top: 1px solid rgba(231,245,235,.1); }
 .position-details summary { color: #83d7ad; cursor: pointer; font-size: .78rem; }
 .position-list { max-height: 390px; margin-top: 14px; padding-right: 8px; overflow: auto; scrollbar-color: #4f9f79 rgba(231,245,235,.06); }
-.position-list > div { display: flex; justify-content: space-between; gap: 18px; padding: 11px 0; border-bottom: 1px solid rgba(231,245,235,.08); font-size: .77rem; text-align: right; }
+.position-list > div { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 8px 18px; padding: 11px 0; border-bottom: 1px solid rgba(231,245,235,.08); font-size: .77rem; text-align: right; }
 .position-list > div > span:first-child { text-align: left; }.position-list small { display: block; max-width: 480px; margin-top: 3px; color: #82988c; font-size: .66rem; }
+.lot-details { grid-column: 1 / -1; padding-top: 5px; text-align: left; }.lot-details summary { color: #9fb2a7; font-size: .68rem; }.lot-details > div { margin-top: 8px; padding: 3px 10px; background: rgba(7,19,15,.45); }.lot-details p { display: flex; justify-content: space-between; gap: 18px; margin: 0; padding: 8px 0; border-bottom: 1px solid rgba(231,245,235,.06); text-align: right; }.lot-details p:last-child { border-bottom: 0; }.lot-details p > span:first-child { text-align: left; }
+.lot-import { margin-top: 20px; padding: 16px 18px; border: 1px solid rgba(231,245,235,.1); background: rgba(131,215,173,.035); }.lot-import summary { color: #83d7ad; cursor: pointer; font-size: .78rem; }.lot-import p,.lot-import small { display: block; color: #9fb2a7; font-size: .72rem; line-height: 1.5; }.lot-import input { display: block; margin: 14px 0; color: #b9c9bf; font-size: .72rem; }.lot-import button { margin-top: 12px; }
 .tax-explainer { margin-top: 20px; padding: 16px 18px; border-left: 3px solid #f4c86a; background: rgba(244,200,106,.06); }
 .tax-explainer strong { color: #f4c86a; font-size: .78rem; }.tax-explainer p { margin: 7px 0 0; color: #b9c9bf; font-size: .73rem; line-height: 1.55; }
 

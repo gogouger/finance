@@ -117,6 +117,18 @@ def investment_positions(request: Request) -> dict:
         if current is None or preference(candidate) > preference(current):
             holdings_by_position[position_key] = candidate
     tax_lots = _active_records(storage, owner, "tax_lot")
+    for lot in tax_lots:
+        source_account = str(lot.get("account_id") or "")
+        candidates = [
+            account_id
+            for account_id, account in accounts_by_id.items()
+            if account_id == source_account
+            or (
+                account.get("mask")
+                and source_account.endswith(str(account["mask"]))
+            )
+        ]
+        lot["linked_account_id"] = candidates[0] if len(candidates) == 1 else None
     holdings = list(holdings_by_position.values())
     for holding in holdings:
         if holding.get("cost_basis") is not None:
@@ -124,7 +136,7 @@ def investment_positions(request: Request) -> dict:
         matching_lots = [
             lot
             for lot in tax_lots
-            if lot["account_id"] == holding["account_id"]
+            if lot.get("linked_account_id") == holding["account_id"]
             and lot["symbol"] == holding.get("ticker_symbol")
         ]
         if not matching_lots:
@@ -278,6 +290,11 @@ def investment_positions(request: Request) -> dict:
             "unrealized_gain": None if gain is None else _money(gain),
             "unrealized_gain_percent": (
                 None if gain is None or not float(basis) else round(100 * gain / float(basis), 1)
+            ),
+            "tax_lot_count": sum(
+                lot.get("linked_account_id") == holding["account_id"]
+                and lot.get("symbol") == holding.get("ticker_symbol")
+                for lot in tax_lots
             ),
         }
     return {

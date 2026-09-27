@@ -191,6 +191,7 @@ def test_investment_sync_is_idempotent_and_never_invents_cost_basis(
         "household_weight_percent": 68.2,
         "unrealized_gain": 300,
         "unrealized_gain_percent": 33.3,
+        "tax_lot_count": 0,
     }
     assert all(item["ownership_scope"] == "household" for item in positions["holdings"])
     assert all(item["ownership_scope"] == "household" for item in positions["activities"])

@@ -245,7 +245,18 @@ type InvestmentHolding = {
     household_weight_percent: number;
     unrealized_gain: number | null;
     unrealized_gain_percent: number | null;
+    tax_lot_count: number;
   };
+};
+type InvestmentTaxLot = {
+  linked_account_id: string | null;
+  symbol: string;
+  description: string;
+  quantity: number;
+  cost_basis: number | null;
+  acquired_date: string;
+  effective_date: string;
+  cost_basis_status: string;
 };
 type InvestmentResult = {
   summary: {
@@ -262,6 +273,7 @@ type InvestmentResult = {
   };
   account_summaries: InvestmentAccountSummary[];
   holdings: InvestmentHolding[];
+  tax_lots: InvestmentTaxLot[];
 };
 type HomeAsset = {
   id: string;
@@ -958,7 +970,47 @@ function NetWorthVisual({ dashboard }: { dashboard: DashboardResult }) {
   );
 }
 
-function InvestmentOverview({ data }: { data: InvestmentResult }) {
+function InvestmentOverview({ data: initialData }: { data: InvestmentResult }) {
+  const [data, setData] = useState(initialData);
+  const [lotImport, setLotImport] = useState<{ content: string; count: number } | null>(null);
+  const [lotImportStatus, setLotImportStatus] = useState("");
+  useEffect(() => setData(initialData), [initialData]);
+  const previewLots = async (file?: File) => {
+    if (!file) return;
+    setLotImportStatus("Checking Fidelity export…");
+    const content = await file.text();
+    const response = await fetch("/api/private/investments/imports/fidelity/preview", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content }),
+    });
+    const result = await response.json();
+    if (!response.ok) {
+      setLotImport(null);
+      setLotImportStatus(result.detail || "That file could not be read.");
+      return;
+    }
+    setLotImport({ content, count: result.counts.tax_lots });
+    setLotImportStatus(`${result.counts.tax_lots} lots are ready to import.`);
+  };
+  const commitLots = async () => {
+    if (!lotImport) return;
+    setLotImportStatus("Importing reviewed lots…");
+    const response = await fetch("/api/private/investments/imports/fidelity/commit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: lotImport.content }),
+    });
+    const result = await response.json();
+    if (!response.ok) {
+      setLotImportStatus(result.detail || "The lots could not be imported.");
+      return;
+    }
+    const refreshed = await fetch("/api/private/investments/positions");
+    if (refreshed.ok) setData(await refreshed.json());
+    setLotImport(null);
+    setLotImportStatus(`${result.result.created} lots added; ${result.result.unchanged} were already present.`);
+  };
   const householdAccounts = data.account_summaries.filter((item) => item.ownership_scope === "household");
   const householdHoldings = data.holdings.filter((item) => item.ownership_scope === "household");
   const maxAccount = Math.max(...householdAccounts.map((item) => item.market_value), 1);
@@ -1007,9 +1059,13 @@ function InvestmentOverview({ data }: { data: InvestmentResult }) {
               <div className="position-list">
                 {accountHoldings.map((holding) => {
                   const gain = holding.analytics.unrealized_gain;
+                  const lots = data.tax_lots
+                    .filter((lot) => lot.linked_account_id === holding.account_id && lot.symbol === holding.ticker_symbol)
+                    .sort((a, b) => a.acquired_date.localeCompare(b.acquired_date));
                   return <div key={`${holding.account_id}-${holding.security_id}`}>
                     <span><strong>{holding.ticker_symbol || holding.security_name || "Investment"}</strong><small>{holding.security_name} · {holding.analytics.account_weight_percent.toFixed(1)}% of account</small></span>
-                    <span>{money.format(holding.institution_value || 0)}<small>{gain === null ? "Basis unavailable" : `${gain >= 0 ? "+" : ""}${money.format(gain)} · ${holding.analytics.unrealized_gain_percent?.toFixed(1)}% vs. basis`}</small></span>
+                    <span>{money.format(holding.institution_value || 0)}<small>{holding.cost_basis === null ? "Cost basis unavailable" : `${money.format(holding.cost_basis)} basis · ${gain !== null && gain >= 0 ? "+" : ""}${gain === null ? "" : money.format(gain)} · ${holding.analytics.unrealized_gain_percent?.toFixed(1)}%`}</small></span>
+                    {lots.length > 0 && <details className="lot-details"><summary>{lots.length} Fidelity tax {lots.length === 1 ? "lot" : "lots"}</summary><div>{lots.map((lot) => <p key={`${lot.symbol}-${lot.acquired_date}`}><span><strong>{new Date(`${lot.acquired_date}T00:00:00`).toLocaleDateString()}</strong><small>{lot.quantity.toLocaleString()} shares</small></span><span><strong>{lot.cost_basis === null ? "Unknown basis" : money.format(lot.cost_basis)}</strong><small>{lot.cost_basis === null || !lot.quantity ? "" : `${money.format(lot.cost_basis / lot.quantity)} per share`}</small></span></p>)}</div></details>}
                   </div>;
                 })}
               </div>
@@ -1018,6 +1074,13 @@ function InvestmentOverview({ data }: { data: InvestmentResult }) {
           </article>
         })}
       </div>
+      <details className="lot-import">
+        <summary>Import Fidelity tax lots</summary>
+        <p>Plaid currently provides aggregate position basis, not the individual remaining lots. Upload a Fidelity CSV export to add acquisition dates, quantities, and basis by lot. The file is sent only to your private Finance service.</p>
+        <input type="file" accept=".csv,text/csv" onChange={(event) => void previewLots(event.target.files?.[0])} />
+        {lotImportStatus && <small>{lotImportStatus}</small>}
+        {lotImport && <button type="button" onClick={() => void commitLots()}>Import {lotImport.count} reviewed lots</button>}
+      </details>
       <div className="tax-explainer">
         <strong>Tax estimate boundaries</strong>
         <p>Taxable accounts use 0%, 15%, and 23.8% federal long-term-gain scenarios only. Retirement trades generally do not create a current capital-gains bill; future traditional-account distributions are generally taxable, while qualified Roth distributions are generally tax-free. State tax, holding period, income brackets, loss netting, and missing basis still need tax-return data.</p>
