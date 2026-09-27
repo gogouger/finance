@@ -27,6 +27,11 @@ class HousingInputs(BaseModel):
     hoa_monthly: float = Field(ge=0, le=100_000)
     owner_utilities_monthly: float = Field(ge=0, le=100_000)
     renter_utilities_monthly: float = Field(ge=0, le=100_000)
+    general_inflation_percent: float = Field(default=2.5, ge=-20, le=30)
+    home_insurance_growth_percent: float | None = Field(default=None, ge=-20, le=30)
+    hoa_growth_percent: float | None = Field(default=None, ge=-20, le=30)
+    owner_utilities_growth_percent: float | None = Field(default=None, ge=-20, le=30)
+    renter_utilities_growth_percent: float | None = Field(default=None, ge=-20, le=30)
     buy_closing_cost_percent: float = Field(ge=0, le=20)
     sell_cost_percent: float = Field(ge=0, le=20)
     loan_type: Literal["conventional", "fha", "va"] = "conventional"
@@ -183,6 +188,13 @@ def _assumption_defaults(
             "2025-01-01",
             "medium",
         ),
+        "general_inflation_percent": _assumption(
+            inputs.general_inflation_percent,
+            "BLS Consumer Price Index; editable planning assumption",
+            "https://www.bls.gov/cpi/",
+            "2025-01-01",
+            "medium",
+        ),
         "home_appreciation_percent": _assumption(
             inputs.home_appreciation_percent,
             "FHFA House Price Index; use the applicable local series",
@@ -268,6 +280,21 @@ def calculate_housing(inputs: HousingInputs) -> dict:
     mortgage_rate_monthly = inputs.mortgage_rate_percent / 100 / 12
     appreciation_monthly = (1 + inputs.home_appreciation_percent / 100) ** (1 / 12) - 1
     rent_growth_monthly = (1 + inputs.rent_growth_percent / 100) ** (1 / 12) - 1
+    def monthly_growth(override: float | None) -> float:
+        annual = inputs.general_inflation_percent if override is None else override
+        return (1 + annual / 100) ** (1 / 12) - 1
+
+    insurance_growth_monthly = monthly_growth(inputs.home_insurance_growth_percent)
+    hoa_growth_monthly = monthly_growth(inputs.hoa_growth_percent)
+    owner_utilities_growth_monthly = monthly_growth(
+        inputs.owner_utilities_growth_percent
+    )
+    renter_utilities_growth_monthly = monthly_growth(
+        inputs.renter_utilities_growth_percent
+    )
+    investment_return_gross_monthly = (
+        (1 + inputs.investment_return_percent / 100) ** (1 / 12) - 1
+    )
     investment_return_net = (
         inputs.investment_return_percent - inputs.investment_tax_drag_percent
     )
@@ -275,6 +302,10 @@ def calculate_housing(inputs: HousingInputs) -> dict:
 
     home_value = inputs.home_price
     rent = inputs.monthly_rent
+    insurance_monthly = inputs.home_insurance_annual / 12
+    hoa_monthly = inputs.hoa_monthly
+    owner_utilities_monthly = inputs.owner_utilities_monthly
+    renter_utilities_monthly = inputs.renter_utilities_monthly
     buy_closing_cost = inputs.home_price * inputs.buy_closing_cost_percent / 100
     renter_investments = inputs.down_payment + buy_closing_cost + origination_cash
     renter_net_contributions = renter_investments
@@ -292,6 +323,15 @@ def calculate_housing(inputs: HousingInputs) -> dict:
     buyer_tax_benefit = 0.0
     buyer_deductible_housing_expense = 0.0
     buyer_incremental_itemized_deduction = 0.0
+    buyer_interest_paid = 0.0
+    buyer_property_tax_paid = 0.0
+    buyer_insurance_paid = 0.0
+    buyer_maintenance_paid = 0.0
+    buyer_hoa_paid = 0.0
+    buyer_utilities_paid = 0.0
+    renter_rent_paid = 0.0
+    renter_utilities_paid = 0.0
+    renter_investment_tax_drag = 0.0
     annual_mortgage_interest = 0.0
     annual_property_tax = 0.0
 
@@ -319,24 +359,36 @@ def calculate_housing(inputs: HousingInputs) -> dict:
         property_tax = home_value * inputs.property_tax_percent / 100 / 12
         annual_mortgage_interest += interest
         annual_property_tax += property_tax
-        insurance = inputs.home_insurance_annual / 12
+        insurance = insurance_monthly
         maintenance = home_value * inputs.maintenance_percent / 100 / 12
         owner_unrecoverable_month = (
             interest
             + property_tax
             + insurance
             + maintenance
-            + inputs.hoa_monthly
-            + inputs.owner_utilities_monthly
+            + hoa_monthly
+            + owner_utilities_monthly
             + mortgage_insurance
         )
-        owner_cash = scheduled_payment + extra_principal + mortgage_insurance + property_tax + insurance + maintenance + inputs.hoa_monthly + inputs.owner_utilities_monthly
-        renter_cash = rent + inputs.renter_utilities_monthly
+        owner_cash = scheduled_payment + extra_principal + mortgage_insurance + property_tax + insurance + maintenance + hoa_monthly + owner_utilities_monthly
+        renter_cash = rent + renter_utilities_monthly
 
         buyer_unrecoverable += owner_unrecoverable_month
         renter_unrecoverable += renter_cash
         buyer_housing_cash_paid += owner_cash
         renter_housing_cash_paid += renter_cash
+        buyer_interest_paid += interest
+        buyer_property_tax_paid += property_tax
+        buyer_insurance_paid += insurance
+        buyer_maintenance_paid += maintenance
+        buyer_hoa_paid += hoa_monthly
+        buyer_utilities_paid += owner_utilities_monthly
+        renter_rent_paid += rent
+        renter_utilities_paid += renter_utilities_monthly
+        renter_investment_tax_drag += renter_investments * max(
+            investment_return_gross_monthly - investment_return_monthly,
+            0,
+        )
         investment_growth = renter_investments * investment_return_monthly
         investment_contribution = owner_cash - renter_cash
         renter_investment_growth += investment_growth
@@ -344,6 +396,10 @@ def calculate_housing(inputs: HousingInputs) -> dict:
         renter_investments += investment_growth + investment_contribution
         home_value *= 1 + appreciation_monthly
         rent *= 1 + rent_growth_monthly
+        insurance_monthly *= 1 + insurance_growth_monthly
+        hoa_monthly *= 1 + hoa_growth_monthly
+        owner_utilities_monthly *= 1 + owner_utilities_growth_monthly
+        renter_utilities_monthly *= 1 + renter_utilities_growth_monthly
 
         if month % 12 == 0:
             deductible_interest_ratio = min(
@@ -415,6 +471,37 @@ def calculate_housing(inputs: HousingInputs) -> dict:
                     ),
                     "renter_unrecoverable_cost": _money(renter_unrecoverable),
                     "buyer_advantage": _money(advantage),
+                    "buyer_components": {
+                        "home_value": _money(home_value),
+                        "loan_balance": _money(loan_balance),
+                        "down_payment": _money(inputs.down_payment),
+                        "principal_paid": _money(
+                            buyer_principal_contributed - inputs.down_payment
+                        ),
+                        "appreciation": _money(buyer_appreciation),
+                        "interest": _money(buyer_interest_paid),
+                        "property_tax": _money(buyer_property_tax_paid),
+                        "insurance": _money(buyer_insurance_paid),
+                        "maintenance": _money(buyer_maintenance_paid),
+                        "hoa": _money(buyer_hoa_paid),
+                        "utilities": _money(buyer_utilities_paid),
+                        "mortgage_insurance": _money(buyer_mortgage_insurance),
+                        "purchase_costs": _money(
+                            buy_closing_cost + origination_cash
+                        ),
+                        "tax_benefit": _money(buyer_tax_benefit),
+                        "sale_cost": _money(buyer_sale_cost),
+                    },
+                    "renter_components": {
+                        "ending_monthly_rent": _money(rent),
+                        "rent": _money(renter_rent_paid),
+                        "utilities": _money(renter_utilities_paid),
+                        "net_contributions": _money(renter_net_contributions),
+                        "investment_growth": _money(renter_investment_growth),
+                        "estimated_investment_tax_drag": _money(
+                            renter_investment_tax_drag
+                        ),
+                    },
                 }
             if enhanced_year_rows:
                 year_result.update(
@@ -469,6 +556,31 @@ def calculate_housing(inputs: HousingInputs) -> dict:
             if inputs.pmi_annual_percent is None
             else inputs.pmi_annual_percent,
         ),
+        "cost_escalation": {
+            "general_inflation_percent": _money(
+                inputs.general_inflation_percent
+            ),
+            "home_insurance_growth_percent": _money(
+                inputs.general_inflation_percent
+                if inputs.home_insurance_growth_percent is None
+                else inputs.home_insurance_growth_percent
+            ),
+            "hoa_growth_percent": _money(
+                inputs.general_inflation_percent
+                if inputs.hoa_growth_percent is None
+                else inputs.hoa_growth_percent
+            ),
+            "owner_utilities_growth_percent": _money(
+                inputs.general_inflation_percent
+                if inputs.owner_utilities_growth_percent is None
+                else inputs.owner_utilities_growth_percent
+            ),
+            "renter_utilities_growth_percent": _money(
+                inputs.general_inflation_percent
+                if inputs.renter_utilities_growth_percent is None
+                else inputs.renter_utilities_growth_percent
+            ),
+        },
         "years": years,
         "crossover_years": crossover_years,
     }

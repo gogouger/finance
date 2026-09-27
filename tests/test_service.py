@@ -160,24 +160,58 @@ def test_housing_compares_buying_with_renting_and_investing_the_difference(
         "buyer_purchase_costs": 0,
         "renter_starting_investment": 12000,
     }
-    assert body["years"] == [
-        {
-            "year": 1,
-            "buyer_equity": 15600,
-            "buyer_net_wealth": 15600,
-            "buyer_housing_cash_paid": 15600,
-            "buyer_principal_contributed": 15600,
-            "buyer_appreciation": 0,
-            "buyer_sale_cost": 0,
-            "renter_investments": 3600,
-            "renter_housing_cash_paid": 12000,
-            "renter_net_contributions": 3600,
-            "renter_investment_growth": 0,
-            "buyer_unrecoverable_cost": 0,
-            "renter_unrecoverable_cost": 12000,
-            "buyer_advantage": 12000,
-        }
-    ]
+    year = body["years"][0]
+    assert {
+        key: year[key]
+        for key in (
+            "year",
+            "buyer_equity",
+            "buyer_net_wealth",
+            "buyer_housing_cash_paid",
+            "buyer_principal_contributed",
+            "buyer_appreciation",
+            "buyer_sale_cost",
+            "renter_investments",
+            "renter_housing_cash_paid",
+            "renter_net_contributions",
+            "renter_investment_growth",
+            "buyer_unrecoverable_cost",
+            "renter_unrecoverable_cost",
+            "buyer_advantage",
+        )
+    } == {
+        "year": 1,
+        "buyer_equity": 15600,
+        "buyer_net_wealth": 15600,
+        "buyer_housing_cash_paid": 15600,
+        "buyer_principal_contributed": 15600,
+        "buyer_appreciation": 0,
+        "buyer_sale_cost": 0,
+        "renter_investments": 3600,
+        "renter_housing_cash_paid": 12000,
+        "renter_net_contributions": 3600,
+        "renter_investment_growth": 0,
+        "buyer_unrecoverable_cost": 0,
+        "renter_unrecoverable_cost": 12000,
+        "buyer_advantage": 12000,
+    }
+    assert year["buyer_components"] == {
+        "home_value": 120000,
+        "loan_balance": 104400,
+        "down_payment": 12000,
+        "principal_paid": 3600,
+        "appreciation": 0,
+        "interest": 0,
+        "property_tax": 0,
+        "insurance": 0,
+        "maintenance": 0,
+        "hoa": 0,
+        "utilities": 0,
+        "mortgage_insurance": 0,
+        "purchase_costs": 0,
+        "tax_benefit": 0,
+        "sale_cost": 0,
+    }
     assert body["crossover_years"] == [1]
 
 

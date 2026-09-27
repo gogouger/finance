@@ -166,6 +166,7 @@ def test_model_defaults_publish_editable_source_date_and_confidence():
         "buy_closing_cost_percent",
         "maintenance_percent",
         "rent_growth_percent",
+        "general_inflation_percent",
         "home_appreciation_percent",
     }
     assert locally_variable <= fha["assumption_defaults"].keys()
@@ -222,3 +223,74 @@ def test_three_editable_assumption_cases_cover_the_full_horizon():
         6,
     ]
     assert len({case["years"][-1]["buyer_net_wealth"] for case in cases}) == 3
+
+
+def test_general_inflation_escalates_recurring_costs_and_exposes_story_layers():
+    result = calculate_housing(
+        _inputs(
+            years=2,
+            monthly_rent=1_000,
+            rent_growth_percent=10,
+            home_insurance_annual=1_200,
+            hoa_monthly=100,
+            owner_utilities_monthly=200,
+            renter_utilities_monthly=150,
+            general_inflation_percent=10,
+        )
+    )
+
+    first, second = result["years"]
+    assert second["renter_components"]["rent"] > first["renter_components"]["rent"] * 2
+    assert second["buyer_components"]["insurance"] > first["buyer_components"]["insurance"] * 2
+    assert second["buyer_components"]["hoa"] > first["buyer_components"]["hoa"] * 2
+    assert second["buyer_components"]["utilities"] > first["buyer_components"]["utilities"] * 2
+    assert second["renter_components"]["utilities"] > first["renter_components"]["utilities"] * 2
+    assert result["cost_escalation"] == {
+        "general_inflation_percent": 10,
+        "home_insurance_growth_percent": 10,
+        "hoa_growth_percent": 10,
+        "owner_utilities_growth_percent": 10,
+        "renter_utilities_growth_percent": 10,
+    }
+
+    buyer = second["buyer_components"]
+    assert buyer["home_value"] - buyer["loan_balance"] - buyer["sale_cost"] == pytest.approx(
+        second["buyer_net_wealth"], abs=0.02
+    )
+    assert buyer["down_payment"] + buyer["principal_paid"] == pytest.approx(
+        second["buyer_principal_contributed"], abs=0.02
+    )
+    assert buyer["interest"] + buyer["property_tax"] + buyer["insurance"] + buyer["maintenance"] + buyer["hoa"] + buyer["utilities"] + buyer["mortgage_insurance"] + buyer["purchase_costs"] - buyer["tax_benefit"] + buyer["sale_cost"] == pytest.approx(
+        second["buyer_unrecoverable_cost"], abs=0.08
+    )
+
+
+def test_cost_growth_overrides_are_independent_of_general_inflation():
+    result = calculate_housing(
+        _inputs(
+            years=2,
+            home_insurance_annual=1_200,
+            hoa_monthly=100,
+            owner_utilities_monthly=200,
+            renter_utilities_monthly=150,
+            general_inflation_percent=10,
+            home_insurance_growth_percent=0,
+            hoa_growth_percent=1,
+            owner_utilities_growth_percent=2,
+            renter_utilities_growth_percent=3,
+        )
+    )
+
+    assert result["cost_escalation"] == {
+        "general_inflation_percent": 10,
+        "home_insurance_growth_percent": 0,
+        "hoa_growth_percent": 1,
+        "owner_utilities_growth_percent": 2,
+        "renter_utilities_growth_percent": 3,
+    }
+    first, second = result["years"]
+    assert second["buyer_components"]["insurance"] == pytest.approx(
+        first["buyer_components"]["insurance"] * 2, abs=0.02
+    )
+    assert second["buyer_components"]["hoa"] > first["buyer_components"]["hoa"] * 2
+    assert second["buyer_components"]["hoa"] < first["buyer_components"]["hoa"] * 2.02

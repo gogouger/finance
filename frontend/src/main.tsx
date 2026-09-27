@@ -1,4 +1,4 @@
-import { FormEvent, StrictMode, useEffect, useState } from "react";
+import { FormEvent, StrictMode, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
 import { Connections } from "./connections";
@@ -47,6 +47,11 @@ type Inputs = {
   hoa_monthly: number;
   owner_utilities_monthly: number;
   renter_utilities_monthly: number;
+  general_inflation_percent: number;
+  home_insurance_growth_percent?: number;
+  hoa_growth_percent?: number;
+  owner_utilities_growth_percent?: number;
+  renter_utilities_growth_percent?: number;
   buy_closing_cost_percent: number;
   sell_cost_percent: number;
 };
@@ -65,6 +70,31 @@ type Year = {
   buyer_unrecoverable_cost: number;
   renter_unrecoverable_cost: number;
   buyer_advantage: number;
+  buyer_components: {
+    home_value: number;
+    loan_balance: number;
+    down_payment: number;
+    principal_paid: number;
+    appreciation: number;
+    interest: number;
+    property_tax: number;
+    insurance: number;
+    maintenance: number;
+    hoa: number;
+    utilities: number;
+    mortgage_insurance: number;
+    purchase_costs: number;
+    tax_benefit: number;
+    sale_cost: number;
+  };
+  renter_components: {
+    ending_monthly_rent: number;
+    rent: number;
+    utilities: number;
+    net_contributions: number;
+    investment_growth: number;
+    estimated_investment_tax_drag: number;
+  };
 };
 type InitialCashAllocation = {
   shared_starting_cash: number;
@@ -78,6 +108,7 @@ type Result = {
   initial_cash_allocation: InitialCashAllocation;
   years: Year[];
   crossover_years: number[];
+  cost_escalation: Record<string, number>;
 };
 type RetirementInputs = {
   current_age: number;
@@ -330,6 +361,7 @@ const defaults: Inputs = {
   hoa_monthly: 0,
   owner_utilities_monthly: 350,
   renter_utilities_monthly: 250,
+  general_inflation_percent: 2.5,
   buy_closing_cost_percent: 3,
   sell_cost_percent: 7,
 };
@@ -513,6 +545,8 @@ function Housing() {
   const [error, setError] = useState("");
   const [running, setRunning] = useState(false);
   const [completedAt, setCompletedAt] = useState("");
+  const [activeStage, setActiveStage] = useState(0);
+  const walkthroughRef = useRef<HTMLDivElement>(null);
   const update = (key: keyof Inputs) => (value: number) =>
     setInputs((current) => ({ ...current, [key]: value }));
   async function calculate(event?: FormEvent) {
@@ -543,14 +577,26 @@ function Housing() {
     }
   }
   useEffect(() => {
-    void calculate();
+    const timer = window.setTimeout(() => void calculate(), 140);
+    return () => window.clearTimeout(timer);
+  }, [inputs]);
+  useEffect(() => {
+    const root = walkthroughRef.current;
+    if (!root || !("IntersectionObserver" in window)) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visible = entries
+          .filter((entry) => entry.isIntersecting)
+          .sort((left, right) => right.intersectionRatio - left.intersectionRatio)[0];
+        if (visible) setActiveStage(Number((visible.target as HTMLElement).dataset.stage));
+      },
+      { rootMargin: "-18% 0px -58%", threshold: [0.15, 0.4, 0.7] },
+    );
+    root.querySelectorAll<HTMLElement>("[data-stage]").forEach((step) => observer.observe(step));
+    return () => observer.disconnect();
   }, []);
   const final = result?.years.at(-1);
-  const outcome = !final
-    ? "Calculating…"
-    : final.buyer_advantage >= 0
-      ? `Buying finishes ${money.format(final.buyer_advantage)} ahead.`
-      : `Renting and investing finishes ${money.format(Math.abs(final.buyer_advantage))} ahead.`;
+  const firstCrossover = result?.crossover_years[0];
   return (
     <main>
       <Nav />
@@ -565,168 +611,81 @@ function Housing() {
           the cash it does not spend. This model keeps all three ideas separate.
         </p>
       </header>
-      <div className="calculator-grid">
-        <form className="assumptions" onSubmit={calculate}>
-          <div className="section-title">
-            <h2>Assumptions</h2>
-            <span>Editable</span>
-          </div>
-          <Slider
-            label="Home price"
-            value={inputs.home_price}
-            min={100000}
-            max={2000000}
-            step={10000}
-            format={money.format}
-            change={update("home_price")}
-          />
-          <Slider
-            label="Down payment"
-            value={inputs.down_payment}
-            min={0}
-            max={inputs.home_price}
-            step={5000}
-            format={money.format}
-            change={update("down_payment")}
-          />
-          <Slider
-            label="Mortgage rate"
-            value={inputs.mortgage_rate_percent}
-            min={0}
-            max={15}
-            step={0.125}
-            format={(v) => `${v}%`}
-            change={update("mortgage_rate_percent")}
-          />
-          <Slider
-            label="Comparable rent"
-            value={inputs.monthly_rent}
-            min={500}
-            max={10000}
-            step={100}
-            format={(v) => `${money.format(v)}/mo`}
-            change={update("monthly_rent")}
-          />
-          <Slider
-            label="Time in home"
-            value={inputs.years}
-            min={1}
-            max={30}
-            step={1}
-            format={(v) => `${v} years`}
-            change={update("years")}
-          />
-          <Slider
-            label="Home appreciation"
-            value={inputs.home_appreciation_percent}
-            min={-5}
-            max={10}
-            step={0.25}
-            format={(v) => `${v}%/yr`}
-            change={update("home_appreciation_percent")}
-          />
-          <Slider
-            label="Investment return"
-            value={inputs.investment_return_percent}
-            min={-5}
-            max={15}
-            step={0.25}
-            format={(v) => `${v}%/yr`}
-            change={update("investment_return_percent")}
-          />
-          <button type="submit" disabled={running}>
-            {running ? "Recalculating…" : "Recalculate projection"}
-          </button>
-          {completedAt && !running && (
-            <p className="completion" role="status">
-              Updated at {completedAt}
-            </p>
-          )}
-          {error && (
-            <p className="form-error" role="alert">
-              {error}
-            </p>
-          )}
-        </form>
-        <section className="results" aria-live="polite">
-          <div className="result-lead">
-            <p className="eyebrow">At year {inputs.years}</p>
-            <h2>{outcome}</h2>
-            <p>
-              Mortgage payment:{" "}
-              {result ? money.format(result.monthly_mortgage_payment) : "—"} per
-              month, before ownership costs.
-            </p>
-          </div>
-          {final && result && (
-            <>
-              <div className="metric-grid">
-                <div>
-                  <span>Buyer net wealth</span>
-                  <strong>{money.format(final.buyer_net_wealth)}</strong>
-                </div>
-                <div>
-                  <span>Renter investments</span>
-                  <strong>{money.format(final.renter_investments)}</strong>
-                </div>
-                <div>
-                  <span>Buyer unrecoverable</span>
-                  <strong>
-                    {money.format(final.buyer_unrecoverable_cost)}
-                  </strong>
-                </div>
-                <div>
-                  <span>Renter unrecoverable</span>
-                  <strong>
-                    {money.format(final.renter_unrecoverable_cost)}
-                  </strong>
-                </div>
-              </div>
-              <HousingVisuals
-                years={result.years}
-                initialCash={result.initial_cash_allocation}
-              />
-              <details className="definitions">
-                <summary>What these numbers include</summary>
-                <p>
-                  Buyer wealth is sale proceeds after remaining debt and
-                  estimated sale costs. Buyer unrecoverable cost includes
-                  interest, tax, insurance, maintenance, HOA, utilities,
-                  purchase costs, and sale costs. Renter wealth starts with
-                  avoided down payment and closing costs, then adds or withdraws
-                  the monthly cash-flow difference. Investment growth is shown
-                  separately from those contributions.
-                </p>
-              </details>
-              <details>
-                <summary>Year-by-year accessible results</summary>
-                <div className="table-wrap">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Year</th>
-                        <th>Buy</th>
-                        <th>Rent + invest</th>
-                        <th>Difference</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {result.years.map((year) => (
-                        <tr key={year.year}>
-                          <td>{year.year}</td>
-                          <td>{money.format(year.buyer_net_wealth)}</td>
-                          <td>{money.format(year.renter_investments)}</td>
-                          <td>{money.format(year.buyer_advantage)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </details>
-            </>
-          )}
+      <section className="housing-topbar" aria-label="Housing comparison summary" aria-live="polite">
+        <article><span>Mortgage</span><strong>{result ? `${money.format(result.monthly_mortgage_payment)}/mo` : "—"}</strong><small>Principal + interest</small></article>
+        <article><span>Buyer after sale</span><strong>{final ? money.format(final.buyer_net_wealth) : "—"}</strong><small>Debt and sale costs removed</small></article>
+        <article><span>Renter portfolio</span><strong>{final ? money.format(final.renter_investments) : "—"}</strong><small>Cash difference invested</small></article>
+        <article className={final && final.buyer_advantage < 0 ? "rent-ahead" : "buy-ahead"}><span>At year {inputs.years}</span><strong>{final ? money.format(Math.abs(final.buyer_advantage)) : "—"}</strong><small>{!final ? "Calculating" : final.buyer_advantage >= 0 ? "Buying ahead" : "Renting ahead"}{firstCrossover ? ` · crossover ${firstCrossover}` : " · no crossover"}</small></article>
+      </section>
+      {error && <p className="form-error" role="alert">{error}</p>}
+      <form className="housing-story-shell" onSubmit={calculate}>
+        <div className="housing-walkthrough" ref={walkthroughRef}>
+          <section className={activeStage === 0 ? "housing-step active" : "housing-step"} data-stage="0" tabIndex={0} onFocus={() => setActiveStage(0)}>
+            <p className="eyebrow">01 · Equal footing</p>
+            <h2>Start with the same cash.</h2>
+            <p>The buyer moves the down payment into home equity. The renter keeps that cash available to invest. Purchase costs are included on both sides of the comparison.</p>
+            <Slider label="Home price" value={inputs.home_price} min={100000} max={2000000} step={10000} format={money.format} change={update("home_price")} />
+            <Slider label="Down payment" value={inputs.down_payment} min={0} max={inputs.home_price} step={5000} format={money.format} change={update("down_payment")} />
+          </section>
+          <section className={activeStage === 1 ? "housing-step active" : "housing-step"} data-stage="1" tabIndex={0} onFocus={() => setActiveStage(1)}>
+            <p className="eyebrow">02 · Equity returned</p>
+            <h2>Part of the mortgage comes back.</h2>
+            <p>Principal builds equity; interest does not. The mix changes every month, so the model amortizes the loan rather than treating the payment as one cost.</p>
+            <Slider label="Mortgage rate" value={inputs.mortgage_rate_percent} min={0} max={15} step={0.125} format={(v) => `${v}%`} change={update("mortgage_rate_percent")} />
+            <Slider label="Mortgage term" value={inputs.mortgage_term_years} min={10} max={40} step={5} format={(v) => `${v} years`} change={update("mortgage_term_years")} />
+          </section>
+          <section className={activeStage === 2 ? "housing-step active" : "housing-step"} data-stage="2" tabIndex={0} onFocus={() => setActiveStage(2)}>
+            <p className="eyebrow">03 · Market value</p>
+            <h2>Appreciation can create wealth.</h2>
+            <p>Home growth is not guaranteed. It increases both the value you may recover and value-linked costs such as property tax and maintenance.</p>
+            <Slider label="Home appreciation" value={inputs.home_appreciation_percent} min={-5} max={10} step={0.25} format={(v) => `${v}%/yr`} change={update("home_appreciation_percent")} />
+          </section>
+          <section className={activeStage === 3 ? "housing-step active" : "housing-step"} data-stage="3" tabIndex={0} onFocus={() => setActiveStage(3)}>
+            <p className="eyebrow">04 · Ownership costs</p>
+            <h2>These dollars do not become equity.</h2>
+            <p>Interest, tax, insurance, maintenance, HOA, utilities, and mortgage insurance buy housing services or reduce risk—but they are not returned when the house is sold.</p>
+            <Slider label="Property tax" value={inputs.property_tax_percent} min={0} max={3} step={0.05} format={(v) => `${v}%/yr`} change={update("property_tax_percent")} />
+            <Slider label="Annual insurance" value={inputs.home_insurance_annual} min={0} max={15000} step={100} format={money.format} change={update("home_insurance_annual")} />
+            <Slider label="Maintenance allowance" value={inputs.maintenance_percent} min={0} max={5} step={0.1} format={(v) => `${v}%/yr`} change={update("maintenance_percent")} />
+            <Slider label="General cost inflation" value={inputs.general_inflation_percent} min={-2} max={12} step={0.25} format={(v) => `${v}%/yr`} change={update("general_inflation_percent")} />
+            <details className="housing-advanced">
+              <summary>Advanced cost overrides</summary>
+              <Slider label="Insurance growth" value={inputs.home_insurance_growth_percent ?? inputs.general_inflation_percent} min={-2} max={15} step={0.25} format={(v) => `${v}%/yr`} change={update("home_insurance_growth_percent")} />
+              <Slider label="HOA growth" value={inputs.hoa_growth_percent ?? inputs.general_inflation_percent} min={-2} max={15} step={0.25} format={(v) => `${v}%/yr`} change={update("hoa_growth_percent")} />
+              <Slider label="Owner utility growth" value={inputs.owner_utilities_growth_percent ?? inputs.general_inflation_percent} min={-2} max={15} step={0.25} format={(v) => `${v}%/yr`} change={update("owner_utilities_growth_percent")} />
+            </details>
+          </section>
+          <section className={activeStage === 4 ? "housing-step active" : "housing-step"} data-stage="4" tabIndex={0} onFocus={() => setActiveStage(4)}>
+            <p className="eyebrow">05 · Rent changes too</p>
+            <h2>Rent is not frozen in time.</h2>
+            <p>The renter pays for housing each month, and both rent and utilities can rise. The ending rent is visible in the graph explanation.</p>
+            <Slider label="Comparable rent" value={inputs.monthly_rent} min={500} max={10000} step={100} format={(v) => `${money.format(v)}/mo`} change={update("monthly_rent")} />
+            <Slider label="Rent growth" value={inputs.rent_growth_percent} min={-5} max={15} step={0.25} format={(v) => `${v}%/yr`} change={update("rent_growth_percent")} />
+            <Slider label="Renter utility growth" value={inputs.renter_utilities_growth_percent ?? inputs.general_inflation_percent} min={-2} max={15} step={0.25} format={(v) => `${v}%/yr`} change={update("renter_utilities_growth_percent")} />
+          </section>
+          <section className={activeStage === 5 ? "housing-step active" : "housing-step"} data-stage="5" tabIndex={0} onFocus={() => setActiveStage(5)}>
+            <p className="eyebrow">06 · Invest the difference</p>
+            <h2>Cheaper housing leaves investable cash.</h2>
+            <p>The renter starts with the avoided cash-to-close, then invests or withdraws the monthly difference. Returns are reduced by an explicit tax drag.</p>
+            <Slider label="Investment return" value={inputs.investment_return_percent} min={-5} max={15} step={0.25} format={(v) => `${v}%/yr`} change={update("investment_return_percent")} />
+            <Slider label="Investment tax drag" value={inputs.investment_tax_drag_percent} min={0} max={5} step={0.05} format={(v) => `${v}%/yr`} change={update("investment_tax_drag_percent")} />
+          </section>
+          <section className={activeStage === 6 ? "housing-step active" : "housing-step"} data-stage="6" tabIndex={0} onFocus={() => setActiveStage(6)}>
+            <p className="eyebrow">07 · Walk away today</p>
+            <h2>Compare money available after leaving.</h2>
+            <p>The buyer sells, pays sale costs and the remaining mortgage, and keeps the rest. The renter keeps the investment portfolio. That is the apples-to-apples finish.</p>
+            <Slider label="Time in home" value={inputs.years} min={1} max={30} step={1} format={(v) => `${v} years`} change={update("years")} />
+            <Slider label="Purchase costs" value={inputs.buy_closing_cost_percent} min={0} max={8} step={0.25} format={(v) => `${v}%`} change={update("buy_closing_cost_percent")} />
+            <Slider label="Sale costs" value={inputs.sell_cost_percent} min={0} max={12} step={0.25} format={(v) => `${v}%`} change={update("sell_cost_percent")} />
+            <button type="submit" disabled={running}>{running ? "Updating…" : "Refresh comparison"}</button>
+            {completedAt && !running && <p className="completion" role="status">Updated at {completedAt}</p>}
+          </section>
+        </div>
+        <section className="housing-visual-sticky" aria-live="polite">
+          {result && final ? <HousingVisuals years={result.years} initialCash={result.initial_cash_allocation} stage={activeStage} /> : <p className="dashboard-loading">Building the comparison…</p>}
         </section>
-      </div>
+      </form>
+      {result && <details className="housing-accessible-results"><summary>Year-by-year accessible results and definitions</summary><p>Buyer wealth is sale proceeds after remaining debt and estimated sale costs. Renter wealth begins with avoided cash-to-close, then adds or withdraws the monthly cash-flow difference. Costs and growth assumptions compound monthly.</p><div className="table-wrap"><table><thead><tr><th>Year</th><th>Buy after sale</th><th>Rent + invest</th><th>Difference</th></tr></thead><tbody>{result.years.map((year) => <tr key={year.year}><td>{year.year}</td><td>{money.format(year.buyer_net_wealth)}</td><td>{money.format(year.renter_investments)}</td><td>{money.format(year.buyer_advantage)}</td></tr>)}</tbody></table></div></details>}
     </main>
   );
 }

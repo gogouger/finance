@@ -18,6 +18,31 @@ type HousingYear = {
   renter_net_contributions: number;
   renter_investment_growth: number;
   buyer_advantage: number;
+  buyer_components: {
+    home_value: number;
+    loan_balance: number;
+    down_payment: number;
+    principal_paid: number;
+    appreciation: number;
+    interest: number;
+    property_tax: number;
+    insurance: number;
+    maintenance: number;
+    hoa: number;
+    utilities: number;
+    mortgage_insurance: number;
+    purchase_costs: number;
+    tax_benefit: number;
+    sale_cost: number;
+  };
+  renter_components: {
+    ending_monthly_rent: number;
+    rent: number;
+    utilities: number;
+    net_contributions: number;
+    investment_growth: number;
+    estimated_investment_tax_drag: number;
+  };
 };
 
 type InitialCashAllocation = {
@@ -100,37 +125,96 @@ function Composition({ pieces }: { pieces: { label: string; value: number; color
   </div>;
 }
 
-export function HousingVisuals({ years, initialCash }: { years: HousingYear[]; initialCash: InitialCashAllocation }) {
+export function HousingVisuals({ years, initialCash, stage = 0 }: { years: HousingYear[]; initialCash: InitialCashAllocation; stage?: number }) {
   const [selected, setSelected] = useState(years.length - 1);
   const index = Math.min(selected, years.length - 1);
   const row = years[index];
   const crossover = years.find((year) => year.buyer_advantage >= 0)?.year;
   if (!row) return null;
-  return <section className="visual-story" aria-label="Housing projection explained visually">
-    <div className="starting-cash">
-      <div className="starting-cash-heading"><p className="eyebrow">Day one · equal starting cash</p><h3>{money.format(initialCash.shared_starting_cash)} takes two different paths</h3><p>The down payment is not treated as money that disappears. It becomes home equity for the buyer and remains available to invest for the renter.</p></div>
-      <article><span>Buy</span><strong>{money.format(initialCash.buyer_down_payment_to_home)}</strong><p>Down payment moved into the house as equity.</p>{initialCash.buyer_purchase_costs > 0 && <small>Plus {money.format(initialCash.buyer_purchase_costs)} of purchase costs.</small>}</article>
-      <article><span>Rent + invest</span><strong>{money.format(initialCash.renter_starting_investment)}</strong><p>The avoided down payment and purchase costs are invested on day one.</p></article>
-    </div>
-    <div className="story-heading"><div><p className="eyebrow">The race over time</p><h3>Wealth after moving out</h3></div><p>Both lines are net of the costs needed to exit the position. The gap—not the home price—is the useful comparison.</p></div>
+  const stages = [
+    {
+      eyebrow: "Equal starting cash",
+      title: `${money.format(initialCash.shared_starting_cash)} takes two paths`,
+      note: "The buyer moves cash into equity and purchase costs. The renter invests the same starting cash.",
+      evidence: [
+        ["Buyer down payment", initialCash.buyer_down_payment_to_home],
+        ["Buyer purchase costs", initialCash.buyer_purchase_costs],
+        ["Renter starts invested", initialCash.renter_starting_investment],
+      ],
+    },
+    {
+      eyebrow: `By year ${row.year}`,
+      title: `${money.format(row.buyer_components.principal_paid)} of mortgage principal came back as equity`,
+      note: "The rest of the scheduled mortgage cost was interest. Principal lowers the balance still owed at sale.",
+      evidence: [
+        ["Down payment", row.buyer_components.down_payment],
+        ["Principal paid", row.buyer_components.principal_paid],
+        ["Loan still owed", row.buyer_components.loan_balance],
+      ],
+    },
+    {
+      eyebrow: "Market value",
+      title: `${money.format(row.buyer_components.appreciation)} came from modeled appreciation`,
+      note: "Appreciation is forecast value, not contributed cash or a guaranteed return.",
+      evidence: [
+        ["Home value", row.buyer_components.home_value],
+        ["Appreciation", row.buyer_components.appreciation],
+        ["Equity before sale", row.buyer_components.home_value - row.buyer_components.loan_balance],
+      ],
+    },
+    {
+      eyebrow: "Unrecoverable ownership cost",
+      title: `${money.format(row.buyer_unrecoverable_cost)} does not remain in the house`,
+      note: "This total includes the estimated cost to sell, net of modeled tax benefit.",
+      evidence: [
+        ["Interest", row.buyer_components.interest],
+        ["Property tax", row.buyer_components.property_tax],
+        ["Insurance + maintenance", row.buyer_components.insurance + row.buyer_components.maintenance],
+        ["HOA + utilities", row.buyer_components.hoa + row.buyer_components.utilities],
+        ["Purchase + sale costs", row.buyer_components.purchase_costs + row.buyer_components.sale_cost],
+      ],
+    },
+    {
+      eyebrow: "Rent changes over time",
+      title: `${money.format(row.renter_components.ending_monthly_rent)}/mo by year ${row.year}`,
+      note: "Rent and renter utilities compound using their displayed growth assumptions.",
+      evidence: [
+        ["Rent paid", row.renter_components.rent],
+        ["Renter utilities", row.renter_components.utilities],
+        ["Total housing cost", row.renter_unrecoverable_cost],
+      ],
+    },
+    {
+      eyebrow: "Invest the cash difference",
+      title: `${money.format(row.renter_investments)} remains in the renter portfolio`,
+      note: "The portfolio starts with avoided cash-to-close, then receives or funds the monthly housing-cost difference.",
+      evidence: [
+        ["Net contributions", row.renter_components.net_contributions],
+        ["Investment growth", row.renter_components.investment_growth],
+        ["Estimated tax drag", row.renter_components.estimated_investment_tax_drag],
+      ],
+    },
+    {
+      eyebrow: "Wealth after moving out",
+      title: row.buyer_advantage >= 0 ? `Buying is ${money.format(row.buyer_advantage)} ahead` : `Renting is ${money.format(Math.abs(row.buyer_advantage))} ahead`,
+      note: "Buyer wealth is what remains after the mortgage and sale costs. Renter wealth is the liquid investment portfolio.",
+      evidence: [
+        ["Buyer after sale", row.buyer_net_wealth],
+        ["Renter portfolio", row.renter_investments],
+        ["Buyer sale cost", row.buyer_components.sale_cost],
+      ],
+    },
+  ] as const;
+  const active = stages[Math.min(stage, stages.length - 1)];
+  return <section className="visual-story housing-visual" aria-label="Housing projection explained visually">
+    <div className="story-heading"><div><p className="eyebrow">The race over time</p><h3>Wealth after moving out</h3></div><p>The graph stays fixed while the walkthrough explains where both paths came from.</p></div>
     <LineChart rows={years} x={(year) => year.year} label="Buyer net wealth and renter investment wealth over time" series={[
       { label: "Buy: equity after sale", color: "#83d7ad", value: (year) => year.buyer_net_wealth },
       { label: "Rent: invested difference", color: "#d6a866", value: (year) => year.renter_investments },
     ]} />
-    <div className="story-callout"><strong>{crossover ? `Buying first pulls ahead in year ${crossover}.` : "Buying never pulls ahead inside this window."}</strong><span>Move the year control to see where each path's wealth came from.</span></div>
+    <div className="story-callout"><strong>{crossover ? `Buying first pulls ahead in year ${crossover}.` : "Buying never pulls ahead inside this window."}</strong><span>The highlighted explanation follows the walkthrough on the left.</span></div>
     <label className="year-scrubber"><span>Explain year {row.year}</span><input type="range" min={0} max={years.length - 1} value={index} onChange={(event) => setSelected(Number(event.target.value))} /></label>
-    <div className="visual-columns">
-      <article><p className="eyebrow">Buy path</p><h4>{money.format(row.buyer_net_wealth)} net wealth</h4><Composition pieces={[
-        { label: "Cash turned into principal", value: row.buyer_principal_contributed, color: "#83d7ad", note: "Down payment plus mortgage principal" },
-        { label: "Home appreciation", value: row.buyer_appreciation, color: "#4f9f79", note: "Market growth, not guaranteed" },
-        { label: "Unrecoverable costs", value: row.buyer_unrecoverable_cost, color: "#815d58", note: "Interest, tax, upkeep, insurance and transaction costs" },
-      ]} /></article>
-      <article><p className="eyebrow">Rent + invest path</p><h4>{money.format(row.renter_investments)} invested</h4><Composition pieces={[
-        { label: "Money contributed", value: row.renter_net_contributions, color: "#d6a866", note: "Starts with the avoided down payment and purchase costs, then adds the monthly difference" },
-        { label: "Investment growth", value: row.renter_investment_growth, color: "#a77b3d", note: "Net of the assumed tax drag" },
-        { label: "Unrecoverable rent", value: row.renter_unrecoverable_cost, color: "#815d58", note: "Rent and renter utilities paid" },
-      ]} /></article>
-    </div>
+    <article className="housing-stage-evidence" aria-live="polite"><p className="eyebrow">{active.eyebrow}</p><h4>{active.title}</h4><p>{active.note}</p><dl>{active.evidence.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{money.format(value)}</dd></div>)}</dl></article>
   </section>;
 }
 
