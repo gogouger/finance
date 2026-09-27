@@ -23,6 +23,7 @@ class EarlyAccessRuleset(BaseModel):
     effective_date: date
     unrestricted_access_age: float = Field(ge=50, le=75)
     early_withdrawal_penalty_percent: float = Field(ge=0, le=100)
+    hsa_nonqualified_penalty_percent: float = Field(default=20, ge=0, le=100)
     conversion_wait_years: int = Field(ge=0, le=20)
     rule_of_55_min_separation_age: int = Field(ge=50, le=65)
     sepp_minimum_years: int = Field(ge=1, le=20)

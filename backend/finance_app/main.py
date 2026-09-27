@@ -23,6 +23,7 @@ from .lifecycle import router as lifecycle_router
 from .mcp_finance import router as mcp_finance_router
 from .operations import router as operations_router
 from .retirement import RetirementInputs, calculate_retirement
+from .retirement_comparison import router as retirement_comparison_router
 from .retirement_optimizer import router as retirement_optimizer_router
 from .retirement_uncertainty import router as retirement_uncertainty_router
 from .recurring import router as recurring_router
@@ -75,6 +76,7 @@ app.include_router(recurring_router)
 app.include_router(retirement_optimizer_router)
 app.include_router(retirement_uncertainty_router)
 app.include_router(early_retirement_router)
+app.include_router(retirement_comparison_router)
 app.include_router(email_reviews_router)
 
 frontend_root = Path(__file__).resolve().parents[2] / "frontend"

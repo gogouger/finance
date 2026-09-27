@@ -242,6 +242,125 @@ export function RetirementVisuals({ years, retirementAge }: { years: RetirementY
   </section>;
 }
 
+type RetirementComparisonResult = {
+  retirement_age: number;
+  comparison_basis: { annual_take_home_sacrifice: number; accumulation_years: number; ranking_metric: string };
+  strategies: Array<{
+    key: "taxable" | "roth" | "traditional" | "hsa";
+    label: string;
+    annual_primary_contribution: number;
+    annual_taxable_overflow: number;
+    employer_match: number;
+    caveat: string;
+    years: Array<{ age: number; headline_balance: number; after_tax_value: number; accessible_basis: number }>;
+    at_retirement: { age: number; headline_balance: number; after_tax_value: number; accessible_basis: number };
+  }>;
+  ranking: Array<{ key: string; label: string; after_tax_value: number }>;
+  bridge: { years: number; annual_spending_at_retirement: number; required_spending: number; accessible_at_retirement: number; existing_gap: number };
+  early_access: {
+    ruleset: { version: string; effective_date: string };
+    ranking: Array<{ strategy: string; spendable_value: number; eligible: boolean }>;
+    strategies: Array<{ strategy: string; eligible: boolean; spendable_value: number; failure_reason: string | null }>;
+  };
+};
+
+const retirementColors = {
+  taxable: "#d6a866",
+  roth: "#83d7ad",
+  traditional: "#4f9f79",
+  hsa: "#8bb8d4",
+} as const;
+
+const accessLabels: Record<string, string> = {
+  penalized_traditional: "Pay penalty",
+  taxable_bridge: "Taxable bridge",
+  roth_contribution_basis: "Roth basis",
+  roth_conversion_ladder: "Conversion ladder",
+  rule_of_55: "Rule of 55",
+  sepp_72t: "72(t) / SEPP",
+};
+
+export function RetirementComparisonVisuals({ result, stage = 0 }: { result: RetirementComparisonResult; stage?: number }) {
+  const [selected, setSelected] = useState(Math.max(result.comparison_basis.accumulation_years - 1, 0));
+  const maxIndex = Math.max(result.comparison_basis.accumulation_years - 1, 0);
+  const index = Math.min(selected, maxIndex);
+  const rows = result.strategies[0]?.years.map((year, yearIndex) => ({
+    age: year.age,
+    taxable: result.strategies.find((item) => item.key === "taxable")?.years[yearIndex]?.after_tax_value || 0,
+    roth: result.strategies.find((item) => item.key === "roth")?.years[yearIndex]?.after_tax_value || 0,
+    traditional: result.strategies.find((item) => item.key === "traditional")?.years[yearIndex]?.after_tax_value || 0,
+    hsa: result.strategies.find((item) => item.key === "hsa")?.years[yearIndex]?.after_tax_value || 0,
+  })) || [];
+  const selectedAge = rows[index]?.age || result.retirement_age;
+  const byKey = Object.fromEntries(result.strategies.map((item) => [item.key, item]));
+  const best = result.ranking[0];
+  const bestAccess = result.early_access.ranking.find((item) => item.eligible);
+  const stages = [
+    {
+      eyebrow: "Equal household cost",
+      title: `${money.format(result.comparison_basis.annual_take_home_sacrifice)} leaves the paycheck each year`,
+      note: "Pre-tax accounts can invest more because their current tax savings are included in the comparison.",
+      evidence: result.strategies.map((item) => [item.label, item.annual_primary_contribution + item.annual_taxable_overflow + item.employer_match] as [string, number]),
+    },
+    {
+      eyebrow: `Flexible at age ${selectedAge}`,
+      title: `${money.format(byKey.taxable?.years[index]?.after_tax_value || 0)} is modeled spendable brokerage value`,
+      note: byKey.taxable?.caveat || "Taxable gains and annual drag remain explicit.",
+      evidence: [
+        ["Headline balance", byKey.taxable?.years[index]?.headline_balance || 0],
+        ["Spendable after gains tax", byKey.taxable?.years[index]?.after_tax_value || 0],
+        ["Contributed basis", byKey.taxable?.years[index]?.accessible_basis || 0],
+      ] as [string, number][],
+    },
+    {
+      eyebrow: "Tax timing",
+      title: best ? `${best.label} leads at retirement in this scenario` : "Compare after-tax value",
+      note: "The line ranking can flip when current and retirement tax rates, contribution limits, or employer match change.",
+      evidence: ["traditional", "roth", "taxable"].map((key) => [byKey[key]?.label || key, byKey[key]?.at_retirement.after_tax_value || 0] as [string, number]),
+    },
+    {
+      eyebrow: "Qualified medical use",
+      title: `${money.format(byKey.hsa?.at_retirement.after_tax_value || 0)} modeled spendable HSA value`,
+      note: byKey.hsa?.caveat || "Qualified use drives the HSA tax advantage.",
+      evidence: [
+        ["Headline HSA balance", byKey.hsa?.at_retirement.headline_balance || 0],
+        ["After-tax estimate", byKey.hsa?.at_retirement.after_tax_value || 0],
+        ["Annual HSA contribution", byKey.hsa?.annual_primary_contribution || 0],
+      ] as [string, number][],
+    },
+    {
+      eyebrow: `${result.bridge.years}-year bridge`,
+      title: result.bridge.existing_gap > 0 ? `${money.format(result.bridge.existing_gap)} remains after directing new savings to brokerage` : "The taxable-saving path covers the modeled bridge",
+      note: bestAccess ? `${accessLabels[bestAccess.strategy] || bestAccess.strategy} produces the highest modeled spendable withdrawals among eligible single-path tests.` : "No tested early-access path is eligible.",
+      evidence: [
+        ["Bridge spending", result.bridge.required_spending],
+        ["Accessible on taxable path", result.bridge.accessible_at_retirement],
+        ["First-year retirement spending", result.bridge.annual_spending_at_retirement],
+      ] as [string, number][],
+    },
+    {
+      eyebrow: `Ruleset · ${result.early_access.ruleset.effective_date}`,
+      title: "The law assumption is pinned and replaceable",
+      note: `${result.early_access.ruleset.version} controls the access tests. This is an educational scenario, not a promise that today's rules survive unchanged.`,
+      evidence: result.early_access.ranking.slice(0, 3).map((item) => [accessLabels[item.strategy] || item.strategy, item.spendable_value] as [string, number]),
+    },
+  ];
+  const active = stages[Math.min(stage, stages.length - 1)];
+  return <section className="visual-story housing-visual retirement-visual" aria-label="Retirement account choices explained visually">
+    <div className="story-heading"><div><p className="eyebrow">Same sacrifice, four paths</p><h3>Spendable value by age</h3></div><p>Each line values embedded tax and early-access friction. Headline account balances are intentionally not the comparison metric.</p></div>
+    <LineChart rows={rows} x={(row) => row.age} label="After-tax value of equal take-home retirement saving strategies" series={[
+      { label: "Taxable", color: retirementColors.taxable, value: (row) => row.taxable },
+      { label: "Roth", color: retirementColors.roth, value: (row) => row.roth },
+      { label: "Traditional", color: retirementColors.traditional, value: (row) => row.traditional },
+      { label: "HSA", color: retirementColors.hsa, value: (row) => row.hsa },
+    ]} />
+    <div className={`story-callout ${result.bridge.existing_gap > 0 ? "warning" : ""}`}><strong>{best ? `${best.label} leads by modeled spendable value at ${result.retirement_age}.` : "Building the ranking."}</strong><span>{result.bridge.existing_gap > 0 ? `The taxable-saving path leaves a ${money.format(result.bridge.existing_gap)} bridge gap.` : "The taxable-saving path covers the modeled bridge."}</span></div>
+    <label className="year-scrubber"><span>Explain age {selectedAge}</span><input type="range" min={0} max={maxIndex} value={index} onChange={(event) => setSelected(Number(event.target.value))} /></label>
+    <article className="housing-stage-evidence" aria-live="polite"><p className="eyebrow">{active.eyebrow}</p><h4>{active.title}</h4><p>{active.note}</p><dl>{active.evidence.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{money.format(value)}</dd></div>)}</dl></article>
+    {stage === 4 && <div className="access-paths" aria-label="Early access strategy status">{result.early_access.strategies.map((item) => <p key={item.strategy} className={item.eligible ? "eligible" : "ineligible"}><span>{accessLabels[item.strategy] || item.strategy}</span><strong>{item.eligible ? money.format(item.spendable_value) : "Not eligible"}</strong></p>)}</div>}
+  </section>;
+}
+
 const demoCategories = [
   ["Home + utilities", 3380, "34%"],
   ["Food + household", 1670, "17%"],

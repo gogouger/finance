@@ -4,7 +4,7 @@ import "./styles.css";
 import { Connections } from "./connections";
 import { FinanceNav } from "./navigation";
 import { SpendingAnalytics } from "./spending";
-import { DashboardPreview, HousingVisuals, RetirementVisuals } from "./visuals";
+import { DashboardPreview, HousingVisuals, RetirementComparisonVisuals } from "./visuals";
 
 const tools = [
   [
@@ -114,44 +114,89 @@ type RetirementInputs = {
   current_age: number;
   retirement_age: number;
   end_age: number;
-  annual_income: number;
-  annual_expenses: number;
+  annual_take_home_sacrifice: number;
+  annual_retirement_spending: number;
   taxable_balance: number;
   taxable_basis: number;
   traditional_balance: number;
+  workplace_plan_balance: number;
   roth_balance: number;
+  roth_contribution_basis: number;
   hsa_balance: number;
-  taxable_contribution: number;
-  traditional_contribution: number;
-  roth_contribution: number;
-  hsa_contribution: number;
   annual_return_percent: number;
   taxable_tax_drag_percent: number;
   inflation_percent: number;
-  ordinary_tax_rate_percent: number;
+  current_ordinary_tax_rate_percent: number;
+  retirement_ordinary_tax_rate_percent: number;
   capital_gains_tax_rate_percent: number;
+  employer_match: number;
+  traditional_contribution_limit: number;
+  roth_contribution_limit: number;
+  hsa_contribution_limit: number;
+  qualified_hsa_spending_percent: number;
+  annual_conversion_amount: number;
+  sepp_annual_distribution: number;
+  ruleset: {
+    version: string;
+    effective_date: string;
+    unrestricted_access_age: number;
+    early_withdrawal_penalty_percent: number;
+    hsa_nonqualified_penalty_percent: number;
+    conversion_wait_years: number;
+    rule_of_55_min_separation_age: number;
+    sepp_minimum_years: number;
+  };
 };
-type RetirementYear = {
+type RetirementComparisonYear = {
   age: number;
-  phase: "working" | "retired";
-  taxable_balance: number;
-  traditional_balance: number;
-  roth_balance: number;
-  hsa_balance: number;
-  taxable_growth: number;
-  tax_deferred_growth: number;
-  tax_free_growth: number;
-  working_cash_surplus: number;
-  spending: number;
-  taxes: number;
-  unmet_spending: number;
-  total_balance: number;
-  spendable_after_tax: number;
+  headline_balance: number;
+  after_tax_value: number;
+  primary_balance: number;
+  taxable_overflow: number;
+  accessible_basis: number;
 };
 type RetirementResult = {
+  model_version: string;
   currency: "USD";
-  definitions: Record<string, string>;
-  years: RetirementYear[];
+  retirement_age: number;
+  comparison_basis: {
+    annual_take_home_sacrifice: number;
+    accumulation_years: number;
+    ranking_metric: string;
+  };
+  strategies: Array<{
+    key: "taxable" | "roth" | "traditional" | "hsa";
+    label: string;
+    annual_take_home_cost: number;
+    annual_primary_contribution: number;
+    annual_taxable_overflow: number;
+    employer_match: number;
+    years: RetirementComparisonYear[];
+    at_retirement: RetirementComparisonYear;
+    caveat: string;
+  }>;
+  ranking: Array<{ key: string; label: string; after_tax_value: number }>;
+  bridge: {
+    years: number;
+    annual_spending_at_retirement: number;
+    required_spending: number;
+    accessible_at_retirement: number;
+    existing_gap: number;
+  };
+  early_access: {
+    ruleset: { version: string; effective_date: string };
+    ranking: Array<{ strategy: string; spendable_value: number; eligible: boolean }>;
+    strategies: Array<{
+      strategy: string;
+      eligible: boolean;
+      spendable_value: number;
+      failure_reason: string | null;
+      constraints: Record<string, number | boolean | string | null>;
+      years: Array<{ age: number; spendable: number; penalty: number; unmet_spending: number }>;
+    }>;
+  };
+  drivers: string[];
+  disclaimer: string;
 };
 type DashboardMetric = {
   key: string;
@@ -369,22 +414,38 @@ const retirementDefaults: RetirementInputs = {
   current_age: 26,
   retirement_age: 45,
   end_age: 95,
-  annual_income: 120000,
-  annual_expenses: 70000,
+  annual_take_home_sacrifice: 20000,
+  annual_retirement_spending: 70000,
   taxable_balance: 25000,
   taxable_basis: 22000,
   traditional_balance: 60000,
+  workplace_plan_balance: 60000,
   roth_balance: 20000,
+  roth_contribution_basis: 15000,
   hsa_balance: 5000,
-  taxable_contribution: 10000,
-  traditional_contribution: 23000,
-  roth_contribution: 7000,
-  hsa_contribution: 4000,
   annual_return_percent: 7,
   taxable_tax_drag_percent: 0.75,
   inflation_percent: 2.5,
-  ordinary_tax_rate_percent: 22,
+  current_ordinary_tax_rate_percent: 22,
+  retirement_ordinary_tax_rate_percent: 12,
   capital_gains_tax_rate_percent: 15,
+  employer_match: 3000,
+  traditional_contribution_limit: 24500,
+  roth_contribution_limit: 24500,
+  hsa_contribution_limit: 8750,
+  qualified_hsa_spending_percent: 15,
+  annual_conversion_amount: 30000,
+  sepp_annual_distribution: 25000,
+  ruleset: {
+    version: "illustrative-us-2026-v1",
+    effective_date: "2026-01-01",
+    unrestricted_access_age: 59.5,
+    early_withdrawal_penalty_percent: 10,
+    hsa_nonqualified_penalty_percent: 20,
+    conversion_wait_years: 5,
+    rule_of_55_min_separation_age: 55,
+    sepp_minimum_years: 5,
+  },
 };
 const money = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -696,14 +757,21 @@ function Retirement() {
   const [error, setError] = useState("");
   const [running, setRunning] = useState(false);
   const [completedAt, setCompletedAt] = useState("");
+  const [activeStage, setActiveStage] = useState(0);
+  const walkthroughRef = useRef<HTMLDivElement>(null);
   const update = (key: keyof RetirementInputs) => (value: number) =>
     setInputs((current) => ({ ...current, [key]: value }));
+  const updateRule = (key: "unrestricted_access_age" | "early_withdrawal_penalty_percent" | "hsa_nonqualified_penalty_percent" | "conversion_wait_years" | "rule_of_55_min_separation_age" | "sepp_minimum_years") => (value: number) =>
+    setInputs((current) => ({
+      ...current,
+      ruleset: { ...current.ruleset, [key]: value },
+    }));
   async function calculate(event?: FormEvent) {
     event?.preventDefault();
     setError("");
     setRunning(true);
     try {
-      const response = await fetch("/api/public/retirement/calculate", {
+      const response = await fetch("/api/public/retirement/compare", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(inputs),
@@ -726,30 +794,26 @@ function Retirement() {
     }
   }
   useEffect(() => {
-    void calculate();
+    const timer = window.setTimeout(() => void calculate(), 140);
+    return () => window.clearTimeout(timer);
+  }, [inputs]);
+  useEffect(() => {
+    const root = walkthroughRef.current;
+    if (!root || !("IntersectionObserver" in window)) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visible = entries
+          .filter((entry) => entry.isIntersecting)
+          .sort((left, right) => right.intersectionRatio - left.intersectionRatio)[0];
+        if (visible) setActiveStage(Number((visible.target as HTMLElement).dataset.stage));
+      },
+      { rootMargin: "-18% 0px -58%", threshold: [0.15, 0.4, 0.7] },
+    );
+    root.querySelectorAll<HTMLElement>("[data-stage]").forEach((step) => observer.observe(step));
+    return () => observer.disconnect();
   }, []);
-  const final = result?.years.at(-1);
-  const fields: [string, keyof RetirementInputs, string?][] = [
-    ["Current age", "current_age", "years"],
-    ["Retire at", "retirement_age", "years"],
-    ["Plan through", "end_age", "age"],
-    ["Annual income", "annual_income", "USD"],
-    ["Annual expenses", "annual_expenses", "USD"],
-    ["Taxable balance", "taxable_balance", "USD"],
-    ["Taxable cost basis", "taxable_basis", "USD"],
-    ["Traditional balance", "traditional_balance", "USD"],
-    ["Roth balance", "roth_balance", "USD"],
-    ["HSA balance", "hsa_balance", "USD"],
-    ["Taxable contribution", "taxable_contribution", "USD/yr"],
-    ["Traditional contribution", "traditional_contribution", "USD/yr"],
-    ["Roth contribution", "roth_contribution", "USD/yr"],
-    ["HSA contribution", "hsa_contribution", "USD/yr"],
-    ["Annual return", "annual_return_percent", "%"],
-    ["Taxable tax drag", "taxable_tax_drag_percent", "%"],
-    ["Inflation", "inflation_percent", "%"],
-    ["Ordinary tax rate", "ordinary_tax_rate_percent", "%"],
-    ["Capital-gains rate", "capital_gains_tax_rate_percent", "%"],
-  ];
+  const best = result?.ranking[0];
+  const bridgeFunded = result ? result.bridge.existing_gap <= 0.01 : false;
   return (
     <main>
       <Nav />
@@ -760,126 +824,89 @@ function Retirement() {
         <p className="kicker">After-tax planning</p>
         <h1>Retire on your terms</h1>
         <p className="lede">
-          A transparent year-by-year baseline across taxable, traditional, Roth,
-          and HSA accounts. Balances are not equal until taxes are accounted
-          for.
+          Give every account the same hit to take-home pay, then see what is
+          actually spendable—especially if work ends long before 59½.
         </p>
       </header>
-      <div className="retirement-layout">
-        <form className="retirement-form" onSubmit={calculate}>
-          <div className="section-title">
-            <h2>Baseline assumptions</h2>
-            <span>Editable</span>
-          </div>
-          <div className="field-grid">
-            {fields.map(([label, key, suffix]) => (
-              <NumberField
-                key={key}
-                label={label}
-                value={inputs[key]}
-                suffix={suffix}
-                change={update(key)}
-              />
-            ))}
-          </div>
-          <button type="submit" disabled={running}>
-            {running ? "Running projection…" : "Run projection"}
-          </button>
-          {completedAt && !running && (
-            <p className="completion" role="status">
-              Projection updated at {completedAt}
-            </p>
-          )}
-          {error && (
-            <p className="form-error" role="alert">
-              {error}
-            </p>
-          )}
-        </form>
-        <section className="results" aria-live="polite">
-          <div className="result-lead">
-            <p className="eyebrow">At age {inputs.end_age}</p>
-            <h2>
-              {final
-                ? `${money.format(final.spendable_after_tax)} spendable after tax`
-                : "Calculating…"}
-            </h2>
-            <p>
-              {final
-                ? `${money.format(final.total_balance)} headline balance before embedded taxes.`
-                : "Building the year-by-year projection."}
-            </p>
-          </div>
-          {final && result && (
-            <>
-              <div className="metric-grid">
-                <div>
-                  <span>Taxable growth</span>
-                  <strong>{money.format(final.taxable_growth)}</strong>
-                </div>
-                <div>
-                  <span>Tax-deferred growth</span>
-                  <strong>{money.format(final.tax_deferred_growth)}</strong>
-                </div>
-                <div>
-                  <span>Tax-free growth</span>
-                  <strong>{money.format(final.tax_free_growth)}</strong>
-                </div>
-                <div>
-                  <span>Unmet spending</span>
-                  <strong>{money.format(final.unmet_spending)}</strong>
-                </div>
-              </div>
-              <RetirementVisuals
-                years={result.years}
-                retirementAge={inputs.retirement_age}
-              />
-              <details className="definitions" open>
-                <summary>Calculation definitions</summary>
-                {Object.entries(result.definitions).map(
-                  ([account, definition]) => (
-                    <p key={account}>
-                      <strong>
-                        {account[0].toUpperCase() + account.slice(1)}:
-                      </strong>{" "}
-                      {definition}
-                    </p>
-                  ),
-                )}
-              </details>
-              <details>
-                <summary>Year-by-year accessible results</summary>
-                <div className="table-wrap">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Age</th>
-                        <th>Phase</th>
-                        <th>Total</th>
-                        <th>After tax</th>
-                        <th>Spending</th>
-                        <th>Unmet</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {result.years.map((year) => (
-                        <tr key={year.age}>
-                          <td>{year.age}</td>
-                          <td>{year.phase}</td>
-                          <td>{money.format(year.total_balance)}</td>
-                          <td>{money.format(year.spendable_after_tax)}</td>
-                          <td>{money.format(year.spending)}</td>
-                          <td>{money.format(year.unmet_spending)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </details>
-            </>
-          )}
+      <section className="housing-topbar retirement-topbar" aria-label="Retirement comparison summary" aria-live="polite">
+        <article><span>Same take-home cost</span><strong>{money.format(inputs.annual_take_home_sacrifice)}/yr</strong><small>Held equal for every path</small></article>
+        <article><span>Best modeled path</span><strong>{best?.label || "—"}</strong><small>{best ? `${money.format(best.after_tax_value)} spendable at ${inputs.retirement_age}` : "Calculating"}</small></article>
+        <article className={bridgeFunded ? "buy-ahead" : "rent-ahead"}><span>Taxable-path bridge</span><strong>{result ? money.format(result.bridge.existing_gap) : "—"}</strong><small>{bridgeFunded ? "No modeled gap" : `Gap before age ${Math.ceil(inputs.ruleset.unrestricted_access_age)}`}</small></article>
+        <article><span>First-year spending</span><strong>{result ? money.format(result.bridge.annual_spending_at_retirement) : "—"}</strong><small>Inflation-adjusted at age {inputs.retirement_age}</small></article>
+      </section>
+      {error && <p className="form-error" role="alert">{error}</p>}
+      <form className="housing-story-shell retirement-story-shell" onSubmit={calculate}>
+        <div className="housing-walkthrough" ref={walkthroughRef}>
+          <section className={activeStage === 0 ? "housing-step active" : "housing-step"} data-stage="0" tabIndex={0} onFocus={() => setActiveStage(0)}>
+            <p className="eyebrow">01 · Equal sacrifice</p>
+            <h2>Start with the same missing paycheck dollars.</h2>
+            <p>A $20,000 Roth contribution and a $20,000 pre-tax contribution do not cost the household the same amount. This comparison holds the take-home sacrifice constant and grosses up deductible contributions.</p>
+            <Slider label="Current age" value={inputs.current_age} min={18} max={Math.max(18, inputs.retirement_age - 1)} step={1} format={(v) => `${v}`} change={update("current_age")} />
+            <Slider label="Retire at" value={inputs.retirement_age} min={inputs.current_age + 1} max={Math.min(75, inputs.end_age - 1)} step={1} format={(v) => `${v}`} change={update("retirement_age")} />
+            <Slider label="Annual take-home sacrifice" value={inputs.annual_take_home_sacrifice} min={0} max={100000} step={1000} format={(v) => `${money.format(v)}/yr`} change={update("annual_take_home_sacrifice")} />
+            <details className="housing-advanced"><summary>Starting account balances</summary><div className="field-grid compact-fields">
+              <NumberField label="Taxable balance" value={inputs.taxable_balance} suffix="USD" change={update("taxable_balance")} />
+              <NumberField label="Taxable basis" value={inputs.taxable_basis} suffix="USD" change={update("taxable_basis")} />
+              <NumberField label="Traditional" value={inputs.traditional_balance} suffix="USD" change={update("traditional_balance")} />
+              <NumberField label="Workplace plan" value={inputs.workplace_plan_balance} suffix="USD" change={update("workplace_plan_balance")} />
+              <NumberField label="Roth balance" value={inputs.roth_balance} suffix="USD" change={update("roth_balance")} />
+              <NumberField label="Roth basis" value={inputs.roth_contribution_basis} suffix="USD" change={update("roth_contribution_basis")} />
+              <NumberField label="HSA balance" value={inputs.hsa_balance} suffix="USD" change={update("hsa_balance")} />
+            </div></details>
+          </section>
+          <section className={activeStage === 1 ? "housing-step active" : "housing-step"} data-stage="1" tabIndex={0} onFocus={() => setActiveStage(1)}>
+            <p className="eyebrow">02 · Flexible brokerage</p>
+            <h2>Accessibility has a price—and real value.</h2>
+            <p>Brokerage money has no retirement-age gate. The model reduces annual returns for tax drag and taxes only the gain when estimating spendable value.</p>
+            <Slider label="Annual market return" value={inputs.annual_return_percent} min={-5} max={15} step={0.25} format={(v) => `${v}%`} change={update("annual_return_percent")} />
+            <Slider label="Taxable tax drag" value={inputs.taxable_tax_drag_percent} min={0} max={5} step={0.05} format={(v) => `${v}%/yr`} change={update("taxable_tax_drag_percent")} />
+            <Slider label="Capital-gains rate" value={inputs.capital_gains_tax_rate_percent} min={0} max={40} step={1} format={(v) => `${v}%`} change={update("capital_gains_tax_rate_percent")} />
+          </section>
+          <section className={activeStage === 2 ? "housing-step active" : "housing-step"} data-stage="2" tabIndex={0} onFocus={() => setActiveStage(2)}>
+            <p className="eyebrow">03 · Roth vs. traditional</p>
+            <h2>Pay tax now, or buy more assets first.</h2>
+            <p>Roth uses after-tax dollars. Traditional uses the current deduction to contribute more for the same take-home cost, then pays the modeled retirement tax rate when withdrawn.</p>
+            <Slider label="Current ordinary tax rate" value={inputs.current_ordinary_tax_rate_percent} min={0} max={50} step={1} format={(v) => `${v}%`} change={update("current_ordinary_tax_rate_percent")} />
+            <Slider label="Retirement ordinary tax rate" value={inputs.retirement_ordinary_tax_rate_percent} min={0} max={50} step={1} format={(v) => `${v}%`} change={update("retirement_ordinary_tax_rate_percent")} />
+            <Slider label="Annual employer match" value={inputs.employer_match} min={0} max={25000} step={500} format={(v) => `${money.format(v)}/yr`} change={update("employer_match")} />
+            <details className="housing-advanced"><summary>Contribution limits</summary>
+              <Slider label="Traditional workplace limit" value={inputs.traditional_contribution_limit} min={1000} max={100000} step={500} format={money.format} change={update("traditional_contribution_limit")} />
+              <Slider label="Roth path limit" value={inputs.roth_contribution_limit} min={1000} max={100000} step={500} format={money.format} change={update("roth_contribution_limit")} />
+            </details>
+          </section>
+          <section className={activeStage === 3 ? "housing-step active" : "housing-step"} data-stage="3" tabIndex={0} onFocus={() => setActiveStage(3)}>
+            <p className="eyebrow">04 · HSA edge case</p>
+            <h2>Triple tax benefits depend on medical use.</h2>
+            <p>The HSA line does not pretend every retirement dollar is tax free. Choose the portion expected to reimburse qualified medical expenses; the rest is valued with modeled tax and age rules.</p>
+            <Slider label="Annual HSA limit" value={inputs.hsa_contribution_limit} min={1000} max={25000} step={250} format={money.format} change={update("hsa_contribution_limit")} />
+            <Slider label="Qualified medical use" value={inputs.qualified_hsa_spending_percent} min={0} max={100} step={5} format={(v) => `${v}%`} change={update("qualified_hsa_spending_percent")} />
+            <Slider label="Nonqualified HSA penalty before 65" value={inputs.ruleset.hsa_nonqualified_penalty_percent} min={0} max={40} step={1} format={(v) => `${v}%`} change={updateRule("hsa_nonqualified_penalty_percent")} />
+          </section>
+          <section className={activeStage === 4 ? "housing-step active" : "housing-step"} data-stage="4" tabIndex={0} onFocus={() => setActiveStage(4)}>
+            <p className="eyebrow">05 · Stop work early</p>
+            <h2>Retiring at 45 is a bridge problem.</h2>
+            <p>The model tests taxable assets, Roth contribution basis, conversion ladders, Rule of 55, 72(t), and simply paying the early-withdrawal penalty. Eligibility and failures stay visible.</p>
+            <Slider label="Annual spending in today’s dollars" value={inputs.annual_retirement_spending} min={10000} max={250000} step={2500} format={(v) => `${money.format(v)}/yr`} change={update("annual_retirement_spending")} />
+            <Slider label="Annual Roth conversion" value={inputs.annual_conversion_amount} min={0} max={150000} step={2500} format={(v) => `${money.format(v)}/yr`} change={update("annual_conversion_amount")} />
+            <Slider label="Fixed 72(t) distribution" value={inputs.sepp_annual_distribution} min={0} max={150000} step={2500} format={(v) => `${money.format(v)}/yr`} change={update("sepp_annual_distribution")} />
+          </section>
+          <section className={activeStage === 5 ? "housing-step active" : "housing-step"} data-stage="5" tabIndex={0} onFocus={() => setActiveStage(5)}>
+            <p className="eyebrow">06 · Future rules are uncertain</p>
+            <h2>Make assumptions visible, not permanent.</h2>
+            <p>Inflation and tax rules can change over decades. This run pins a dated illustrative ruleset so a future update changes an assumption—not history.</p>
+            <Slider label="Plan through age" value={inputs.end_age} min={inputs.retirement_age + 1} max={110} step={1} format={(v) => `${v}`} change={update("end_age")} />
+            <Slider label="Inflation" value={inputs.inflation_percent} min={0} max={10} step={0.25} format={(v) => `${v}%/yr`} change={update("inflation_percent")} />
+            <Slider label="Unrestricted access age" value={inputs.ruleset.unrestricted_access_age} min={50} max={75} step={0.5} format={(v) => `${v}`} change={updateRule("unrestricted_access_age")} />
+            <Slider label="Early-withdrawal penalty" value={inputs.ruleset.early_withdrawal_penalty_percent} min={0} max={30} step={1} format={(v) => `${v}%`} change={updateRule("early_withdrawal_penalty_percent")} />
+            <button type="submit" disabled={running}>{running ? "Updating…" : "Refresh comparison"}</button>
+            {completedAt && !running && <p className="completion" role="status">Updated at {completedAt}</p>}
+          </section>
+        </div>
+        <section className="housing-visual-sticky" aria-live="polite">
+          {result ? <RetirementComparisonVisuals result={result} stage={activeStage} /> : <p className="dashboard-loading">Building the comparison…</p>}
         </section>
-      </div>
+      </form>
+      {result && <details className="housing-accessible-results"><summary>Full strategy results and model boundaries</summary><p>{result.comparison_basis.ranking_metric} {result.disclaimer}</p><div className="table-wrap"><table><thead><tr><th>Path</th><th>Primary contribution</th><th>Taxable overflow</th><th>Match</th><th>Headline at {inputs.retirement_age}</th><th>Spendable estimate</th></tr></thead><tbody>{result.strategies.map((strategy) => <tr key={strategy.key}><td>{strategy.label}<small>{strategy.caveat}</small></td><td>{money.format(strategy.annual_primary_contribution)}</td><td>{money.format(strategy.annual_taxable_overflow)}</td><td>{money.format(strategy.employer_match)}</td><td>{money.format(strategy.at_retirement.headline_balance)}</td><td>{money.format(strategy.at_retirement.after_tax_value)}</td></tr>)}</tbody></table></div></details>}
     </main>
   );
 }

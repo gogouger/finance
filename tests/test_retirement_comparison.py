@@ -1,0 +1,178 @@
+import json
+import os
+import socket
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+from base64 import urlsafe_b64encode
+from pathlib import Path
+
+import pytest
+
+
+def _unused_port() -> int:
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        return listener.getsockname()[1]
+
+
+@pytest.fixture
+def running_service(tmp_path: Path):
+    port = _unused_port()
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "FINANCE_DATA_DIR": str(tmp_path),
+            "FINANCE_ENCRYPTION_KEY": urlsafe_b64encode(b"0" * 32).decode(),
+            "PLAID_MODE": "fake",
+            "FINANCE_INTERNAL_KEY": "test-internal-key",
+        }
+    )
+    process = subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "uvicorn",
+            "backend.finance_app.main:app",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=environment,
+    )
+    base_url = f"http://127.0.0.1:{port}"
+    try:
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if process.poll() is not None:
+                stdout, stderr = process.communicate()
+                pytest.fail(f"service exited during startup\n{stdout}\n{stderr}")
+            try:
+                with urllib.request.urlopen(f"{base_url}/health", timeout=0.2):
+                    break
+            except (urllib.error.URLError, TimeoutError):
+                time.sleep(0.05)
+        else:
+            pytest.fail("service did not become healthy")
+        yield base_url
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            process.wait(timeout=5)
+
+
+def _inputs(**overrides) -> dict:
+    values = {
+        "current_age": 26,
+        "retirement_age": 45,
+        "end_age": 75,
+        "annual_take_home_sacrifice": 20_000,
+        "annual_retirement_spending": 50_000,
+        "taxable_balance": 25_000,
+        "taxable_basis": 22_000,
+        "traditional_balance": 60_000,
+        "workplace_plan_balance": 60_000,
+        "roth_balance": 20_000,
+        "roth_contribution_basis": 15_000,
+        "hsa_balance": 5_000,
+        "annual_return_percent": 7,
+        "taxable_tax_drag_percent": 0.75,
+        "inflation_percent": 2.5,
+        "current_ordinary_tax_rate_percent": 22,
+        "retirement_ordinary_tax_rate_percent": 12,
+        "capital_gains_tax_rate_percent": 15,
+        "employer_match": 3_000,
+        "traditional_contribution_limit": 24_500,
+        "roth_contribution_limit": 24_500,
+        "hsa_contribution_limit": 8_750,
+        "qualified_hsa_spending_percent": 15,
+        "annual_conversion_amount": 30_000,
+        "sepp_annual_distribution": 25_000,
+        "ruleset": {
+            "version": "illustrative-us-2026-v1",
+            "effective_date": "2026-01-01",
+            "unrestricted_access_age": 59.5,
+            "early_withdrawal_penalty_percent": 10,
+            "conversion_wait_years": 5,
+            "rule_of_55_min_separation_age": 55,
+            "sepp_minimum_years": 5,
+        },
+    }
+    values.update(overrides)
+    return values
+
+
+def _compare(base_url: str, payload: dict) -> dict:
+    request = urllib.request.Request(
+        f"{base_url}/api/public/retirement/compare",
+        data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request) as response:
+        assert response.status == 200
+        return json.load(response)
+
+
+def test_comparison_holds_take_home_sacrifice_constant(running_service: str):
+    result = _compare(running_service, _inputs())
+    strategies = {item["key"]: item for item in result["strategies"]}
+
+    assert result["model_version"] == "retirement-comparison-v1"
+    assert result["comparison_basis"]["annual_take_home_sacrifice"] == 20_000
+    assert strategies["taxable"]["annual_take_home_cost"] == 20_000
+    assert strategies["roth"]["annual_take_home_cost"] == 20_000
+    assert strategies["traditional"]["annual_take_home_cost"] == 20_000
+    assert strategies["traditional"]["annual_primary_contribution"] > 20_000
+    assert strategies["traditional"]["employer_match"] == 3_000
+    assert all(item["years"] for item in strategies.values())
+
+
+def test_age_45_result_explains_bridge_and_access_constraints(
+    running_service: str,
+):
+    result = _compare(running_service, _inputs(retirement_age=45))
+
+    assert result["retirement_age"] == 45
+    assert result["bridge"]["years"] == 15
+    assert result["bridge"]["required_spending"] > 0
+    assert result["bridge"]["accessible_at_retirement"] > 0
+    assert result["early_access"]["ruleset"]["version"] == (
+        "illustrative-us-2026-v1"
+    )
+    access = {
+        item["strategy"]: item
+        for item in result["early_access"]["strategies"]
+    }
+    assert access["rule_of_55"]["eligible"] is False
+    assert access["roth_conversion_ladder"]["constraints"][
+        "first_release_age"
+    ] == 50
+    assert result["drivers"]
+    assert "educational" in result["disclaimer"].lower()
+
+
+def test_tax_rate_changes_the_traditional_comparison(running_service: str):
+    lower_rate = _compare(
+        running_service,
+        _inputs(current_ordinary_tax_rate_percent=12),
+    )
+    higher_rate = _compare(
+        running_service,
+        _inputs(current_ordinary_tax_rate_percent=32),
+    )
+    lower = {item["key"]: item for item in lower_rate["strategies"]}
+    higher = {item["key"]: item for item in higher_rate["strategies"]}
+
+    assert higher["traditional"]["annual_primary_contribution"] > lower[
+        "traditional"
+    ]["annual_primary_contribution"]
+    assert higher["traditional"]["at_retirement"]["headline_balance"] > lower[
+        "traditional"
+    ]["at_retirement"]["headline_balance"]
