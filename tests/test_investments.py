@@ -11,7 +11,10 @@ from pathlib import Path
 
 import pytest
 
-from backend.finance_app.investments import _tax_treatment
+from backend.finance_app.investments import (
+    _holding_benchmark_comparison,
+    _tax_treatment,
+)
 
 
 def _unused_port() -> int:
@@ -119,6 +122,48 @@ def test_tax_treatment_keeps_hsa_and_custodial_assets_out_of_taxable_brokerage()
     assert _tax_treatment({"name": "Joint WROS"}) == "taxable"
 
 
+def test_holding_benchmark_uses_same_lot_dollars_and_reports_coverage():
+    comparison = _holding_benchmark_comparison(
+        {"quantity": 10, "institution_value": 1_500},
+        [
+            {
+                "quantity": 4,
+                "cost_basis": 400,
+                "acquired_date": "2025-01-01",
+            },
+            {
+                "quantity": 6,
+                "cost_basis": 660,
+                "acquired_date": "2025-06-01",
+            },
+        ],
+        [
+            {"date": "2025-01-01", "value": 100},
+            {"date": "2025-05-31", "value": 110},
+            {"date": "2025-12-31", "value": 120},
+        ],
+    )
+
+    assert comparison["status"] == "available"
+    assert comparison["basis_covered"] == 1060
+    assert comparison["actual_covered_value"] == 1500
+    assert comparison["benchmark_value"] == 1200
+    assert comparison["excess_value"] == 300
+    assert comparison["actual_return_percent"] == pytest.approx(41.51, abs=0.01)
+    assert comparison["benchmark_return_percent"] == pytest.approx(13.21, abs=0.01)
+
+
+def test_holding_benchmark_refuses_to_guess_without_lot_history():
+    comparison = _holding_benchmark_comparison(
+        {"quantity": 10, "institution_value": 1_500},
+        [],
+        [{"date": "2025-12-31", "value": 120}],
+    )
+
+    assert comparison["status"] == "unavailable"
+    assert "acquisition dates" in comparison["reason"]
+
+
 def test_investment_sync_is_idempotent_and_never_invents_cost_basis(
     running_service: str,
 ):
@@ -193,6 +238,8 @@ def test_investment_sync_is_idempotent_and_never_invents_cost_basis(
         "unrealized_gain_percent": 33.3,
         "tax_lot_count": 0,
     }
+    assert holdings["TOTAL"]["benchmark_comparison"]["status"] == "unavailable"
+    assert "Tax-lot" in holdings["TOTAL"]["benchmark_comparison"]["reason"]
     assert all(item["ownership_scope"] == "household" for item in positions["holdings"])
     assert all(item["ownership_scope"] == "household" for item in positions["activities"])
 

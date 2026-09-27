@@ -7,12 +7,82 @@ import time
 import urllib.error
 import urllib.request
 from base64 import urlsafe_b64encode
+from datetime import date
 from pathlib import Path
 
 import pytest
 
+from backend.finance_app.dashboard import _net_worth_attribution
+
 
 OWNER = {"X-Forwarded-User": "owner", "X-Auth-Method": "webauthn"}
+
+
+def test_net_worth_change_reconciles_opening_drivers_and_ending_value():
+    result = _net_worth_attribution(
+        account_by_key={
+            "connection:cash": {
+                "type": "depository",
+                "name": "Checking",
+            },
+            "connection:brokerage": {
+                "type": "investment",
+                "name": "Brokerage",
+                "subtype": "brokerage",
+            },
+            "connection:kids": {
+                "type": "investment",
+                "name": "Child UTMA",
+                "subtype": "utma",
+            },
+            "connection:card": {"type": "credit", "name": "Card"},
+        },
+        balance_history={
+            "connection:cash": [
+                {"current": 10_000, "observed_at": "2025-09-20T00:00:00Z"}
+            ],
+            "connection:brokerage": [
+                {"current": 100_000, "observed_at": "2025-09-20T00:00:00Z"}
+            ],
+            "connection:kids": [
+                {"current": 50_000, "observed_at": "2025-09-20T00:00:00Z"}
+            ],
+            "connection:card": [
+                {"current": 2_000, "observed_at": "2025-09-20T00:00:00Z"}
+            ],
+        },
+        assets=[
+            {
+                "kind": "home",
+                "name": "Home",
+                "valuation": {
+                    "amount": 650_000,
+                    "valued_at": "2026-09-20T00:00:00Z",
+                },
+                "valuation_history": [
+                    {
+                        "amount": 600_000,
+                        "valued_at": "2025-09-20T00:00:00Z",
+                    }
+                ],
+                "ownership": {"debt_balance": 0},
+            }
+        ],
+        comparison_date=date(2025, 9, 27),
+        ending_net_worth=800_000,
+        operating_surplus=50_000,
+    )
+
+    assert result["available"] is True
+    assert result["opening_net_worth"] == 708_000
+    assert result["ending_net_worth"] == 800_000
+    assert result["change"] == 92_000
+    assert result["direction"] == "stronger"
+    assert result["drivers"][0]["value"] == 50_000
+    assert result["drivers"][1]["value"] == 42_000
+    assert result["reconciliation_difference"] == 0
+    assert result["coverage"]["covered"] == 4
+    assert "Child UTMA" not in result["coverage"]["sources"]
 
 
 def _unused_port() -> int:
@@ -193,6 +263,12 @@ def test_owner_sees_explainable_metrics_from_normalized_records(
     assert "not a budget target" in dashboard["sections"]["adjusted_spending"][
         "context"
     ]
+    assert dashboard["net_worth_change"]["available"] is False
+    assert dashboard["net_worth_change"]["ending_net_worth"] == 509800
+    assert dashboard["net_worth_change"]["direction"] == "not_yet_measurable"
+    assert dashboard["net_worth_change"]["drivers"][0]["value"] == 1698
+    assert dashboard["net_worth_change"]["coverage"]["covered"] == 0
+    assert "not available" in dashboard["net_worth_change"]["limitations"][-1]
 
 
 def test_expected_recurring_costs_are_not_mislabelled_as_unusual(

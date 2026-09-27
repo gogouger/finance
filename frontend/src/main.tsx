@@ -241,6 +241,23 @@ type DashboardResult = {
   generated_at: string;
   reporting_period: { label: string; start: string; end: string };
   metrics: DashboardMetric[];
+  net_worth_change: {
+    available: boolean;
+    period: { label: string; start: string };
+    opening_net_worth: number | null;
+    ending_net_worth: number;
+    change: number | null;
+    direction: "stronger" | "weaker" | "unchanged" | "not_yet_measurable";
+    drivers: Array<{
+      key: string;
+      label: string;
+      value: number | null;
+      definition: string;
+    }>;
+    reconciliation_difference: number | null;
+    coverage: { covered: number; total: number; percent: number; sources: string[] };
+    limitations: string[];
+  };
   sections: {
     cash_flow: {
       depository_credits: number;
@@ -323,6 +340,28 @@ type InvestmentHolding = {
     unrealized_gain_percent: number | null;
     tax_lot_count: number;
   };
+  benchmark_comparison:
+    | {
+        status: "available";
+        benchmark: string;
+        as_of: string;
+        covered_lots: number;
+        total_lots: number;
+        basis_covered: number;
+        actual_covered_value: number;
+        benchmark_value: number;
+        excess_value: number;
+        actual_return_percent: number | null;
+        benchmark_return_percent: number | null;
+        definition: string;
+        limitations: string[];
+      }
+    | {
+        status: "unavailable";
+        benchmark: string;
+        reason: string;
+        definition: string;
+      };
 };
 type InvestmentTaxLot = {
   linked_account_id: string | null;
@@ -956,6 +995,65 @@ function NetWorthVisual({ dashboard }: { dashboard: DashboardResult }) {
   );
 }
 
+function FinancialChangeStory({ dashboard }: { dashboard: DashboardResult }) {
+  const story = dashboard.net_worth_change;
+  const operating = story.drivers.find((driver) => driver.key === "operating_surplus")?.value || 0;
+  const residual = story.drivers.find((driver) => driver.key === "valuation_and_balance_change")?.value || 0;
+  if (!story.available || story.opening_net_worth == null || story.change == null) {
+    return (
+      <section className="dashboard-panel financial-change-story" aria-labelledby="change-heading">
+        <div className="change-story-copy">
+          <p className="eyebrow">The first question</p>
+          <h2 id="change-heading">Are you financially stronger than one year ago?</h2>
+          <strong>Not honestly measurable yet.</strong>
+          <p>A complete opening balance is available for {story.coverage.covered} of {story.coverage.total} current household accounts and assets. The dashboard will answer this automatically once every current source has a one-year comparison point.</p>
+        </div>
+        <div className="history-progress" style={{ "--coverage": `${story.coverage.percent}%` } as React.CSSProperties}>
+          <div><span>History coverage</span><strong>{story.coverage.percent}%</strong><small>{story.coverage.covered} of {story.coverage.total} sources</small></div>
+        </div>
+        <article className="known-driver"><span>What is known now</span><strong>{money.format(operating)}</strong><p>Trailing-12-month classified income minus adjusted personal spending. This is not the same as a net-worth change.</p></article>
+      </section>
+    );
+  }
+  const opening = story.opening_net_worth;
+  const afterOperating = opening + operating;
+  const ending = story.ending_net_worth;
+  const values = [0, opening, afterOperating, ending];
+  const low = Math.min(...values);
+  const high = Math.max(...values);
+  const range = high - low || 1;
+  const chartTop = 22;
+  const chartHeight = 188;
+  const y = (value: number) => chartTop + chartHeight - ((value - low) / range) * chartHeight;
+  const columns = [
+    { label: "One year ago", start: 0, end: opening, value: opening, kind: "total" },
+    { label: "Income − spending", start: opening, end: afterOperating, value: operating, kind: operating >= 0 ? "positive" : "negative" },
+    { label: "Markets + values", start: afterOperating, end: ending, value: residual, kind: residual >= 0 ? "positive" : "negative" },
+    { label: "Now", start: 0, end: ending, value: ending, kind: "total" },
+  ];
+  return (
+    <section className="dashboard-panel financial-change-story" aria-labelledby="change-heading">
+      <div className="change-story-head"><div><p className="eyebrow">The first question</p><h2 id="change-heading">Are you financially stronger than one year ago?</h2></div><div className={story.change >= 0 ? "change-positive" : "change-negative"}><span>{story.direction}</span><strong>{story.change >= 0 ? "+" : ""}{money.format(story.change)}</strong></div></div>
+      <figure className="change-waterfall"><svg viewBox="0 0 820 270" role="img" aria-label={`Net worth changed from ${money.format(opening)} to ${money.format(ending)}`}>
+        <line className="waterfall-axis" x1="45" x2="785" y1={y(0)} y2={y(0)} />
+        {columns.map((column, index) => {
+          const x = 75 + index * 190;
+          const top = Math.min(y(column.start), y(column.end));
+          const height = Math.max(Math.abs(y(column.start) - y(column.end)), 3);
+          return <g key={column.label}>
+            {index < columns.length - 1 && <line className="waterfall-connector" x1={x + 115} x2={x + 190} y1={y(column.end)} y2={y(column.end)} />}
+            <rect className={`waterfall-bar ${column.kind}`} x={x} y={top} width="115" height={height} rx="2" />
+            <text className="waterfall-value" x={x + 57.5} y={Math.max(top - 9, 13)} textAnchor="middle">{column.value >= 0 && index > 0 && index < 3 ? "+" : ""}{money.format(column.value)}</text>
+            <text className="waterfall-label" x={x + 57.5} y="250" textAnchor="middle">{column.label}</text>
+          </g>;
+        })}
+      </svg><figcaption>Opening net worth plus operating surplus plus market, asset-value, liability, and timing changes equals today’s net worth.</figcaption></figure>
+      <div className="change-driver-grid">{story.drivers.map((driver) => <article key={driver.key}><span>{driver.label}</span><strong>{driver.value == null ? "—" : `${driver.value >= 0 ? "+" : ""}${money.format(driver.value)}`}</strong><p>{driver.definition}</p></article>)}</div>
+      <details className="story-method"><summary>Reconciliation and limitations</summary><p>The waterfall reconciles exactly to {money.format(story.ending_net_worth)}; rounding difference {money.format(story.reconciliation_difference || 0)}.</p>{story.limitations.map((item) => <p key={item}>{item}</p>)}</details>
+    </section>
+  );
+}
+
 function InvestmentOverview({ data: initialData }: { data: InvestmentResult }) {
   const [data, setData] = useState(initialData);
   const [lotImport, setLotImport] = useState<{ content: string; count: number } | null>(null);
@@ -1051,6 +1149,12 @@ function InvestmentOverview({ data: initialData }: { data: InvestmentResult }) {
                   return <div key={`${holding.account_id}-${holding.security_id}`}>
                     <span><strong>{holding.ticker_symbol || holding.security_name || "Investment"}</strong><small>{holding.security_name} · {holding.analytics.account_weight_percent.toFixed(1)}% of account</small></span>
                     <span>{money.format(holding.institution_value || 0)}<small>{holding.cost_basis === null ? "Cost basis unavailable" : `${money.format(holding.cost_basis)} basis · ${gain !== null && gain >= 0 ? "+" : ""}${gain === null ? "" : money.format(gain)} · ${holding.analytics.unrealized_gain_percent?.toFixed(1)}%`}</small></span>
+                    <div className={`holding-benchmark ${holding.benchmark_comparison.status}`}>
+                      {holding.benchmark_comparison.status === "available" ? <>
+                        <span><strong>{holding.benchmark_comparison.excess_value >= 0 ? "Beat" : "Trailed"} {holding.benchmark_comparison.benchmark} by {money.format(Math.abs(holding.benchmark_comparison.excess_value))}</strong><small>Same {money.format(holding.benchmark_comparison.basis_covered)} invested on the covered lot dates</small></span>
+                        <span><strong>{holding.benchmark_comparison.actual_return_percent?.toFixed(1)}% vs. {holding.benchmark_comparison.benchmark_return_percent?.toFixed(1)}%</strong><small>{holding.benchmark_comparison.covered_lots} of {holding.benchmark_comparison.total_lots} lots · through {new Date(`${holding.benchmark_comparison.as_of}T00:00:00`).toLocaleDateString()}</small></span>
+                      </> : <><span><strong>{holding.benchmark_comparison.benchmark} comparison collecting data</strong><small>{holding.benchmark_comparison.reason}</small></span></>}
+                    </div>
                     {lots.length > 0 && <details className="lot-details"><summary>{lots.length} Fidelity tax {lots.length === 1 ? "lot" : "lots"}</summary><div>{lots.map((lot) => <p key={`${lot.symbol}-${lot.acquired_date}`}><span><strong>{new Date(`${lot.acquired_date}T00:00:00`).toLocaleDateString()}</strong><small>{lot.quantity.toLocaleString()} shares</small></span><span><strong>{lot.cost_basis === null ? "Unknown basis" : money.format(lot.cost_basis)}</strong><small>{lot.cost_basis === null || !lot.quantity ? "" : `${money.format(lot.cost_basis / lot.quantity)} per share`}</small></span></p>)}</div></details>}
                   </div>;
                 })}
@@ -1201,14 +1305,10 @@ function Dashboard() {
     dashboard?.metrics.map((metric) => [metric.key, metric]),
   );
   const headlineKeys = [
-    "net_worth",
     "cash",
-    "credit_card_liabilities",
-    "income",
-    "adjusted_personal_spending",
-    "true_monthly_cost",
     "investment_value",
-    "custodial_investment_value",
+    "true_monthly_cost",
+    "credit_card_liabilities",
   ];
   return (
     <main>
@@ -1248,6 +1348,7 @@ function Dashboard() {
               subscription.
             </p>
           ))}
+          <FinancialChangeStory dashboard={dashboard} />
           <section
             className="dashboard-metrics"
             aria-label="Financial overview"

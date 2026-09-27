@@ -66,6 +66,117 @@ def _xirr(cash_flows: list[tuple[date, float]]) -> float | None:
     return (low + high) / 2
 
 
+def _holding_benchmark_comparison(
+    holding: dict,
+    lots: list[dict],
+    benchmark_points: list[dict],
+    *,
+    benchmark: str = "SPY",
+) -> dict:
+    definition = (
+        "Compares each covered tax lot with investing the same reported cost "
+        f"basis in {benchmark} on the lot acquisition date."
+    )
+    usable_lots = [
+        item
+        for item in lots
+        if item.get("cost_basis") is not None
+        and item.get("quantity")
+        and item.get("acquired_date")
+    ]
+    if not usable_lots:
+        return {
+            "status": "unavailable",
+            "benchmark": benchmark,
+            "reason": "Tax-lot acquisition dates and basis are required.",
+            "definition": definition,
+        }
+    points = sorted(
+        benchmark_points,
+        key=lambda item: item.get("date", ""),
+    )
+    if not points:
+        return {
+            "status": "unavailable",
+            "benchmark": benchmark,
+            "reason": f"No {benchmark} total-return observations are stored.",
+            "definition": definition,
+        }
+    latest = points[-1]
+    modeled = []
+    for lot in usable_lots:
+        purchase_points = [
+            item
+            for item in points
+            if item.get("date", "") <= lot["acquired_date"]
+        ]
+        if not purchase_points:
+            continue
+        purchase = purchase_points[-1]
+        if not float(purchase.get("value") or 0):
+            continue
+        basis = float(lot["cost_basis"])
+        modeled.append(
+            {
+                "basis": basis,
+                "quantity": float(lot["quantity"]),
+                "acquired_date": lot["acquired_date"],
+                "benchmark_value": basis
+                * float(latest["value"])
+                / float(purchase["value"]),
+            }
+        )
+    if len(modeled) != len(usable_lots):
+        return {
+            "status": "unavailable",
+            "benchmark": benchmark,
+            "reason": f"{benchmark} history does not reach every covered acquisition date.",
+            "definition": definition,
+        }
+    holding_quantity = float(holding.get("quantity") or 0)
+    covered_quantity = sum(item["quantity"] for item in modeled)
+    if holding_quantity <= 0 or covered_quantity > holding_quantity + 1e-6:
+        return {
+            "status": "unavailable",
+            "benchmark": benchmark,
+            "reason": "Covered tax-lot quantities do not reconcile to the current position.",
+            "definition": definition,
+        }
+    current_value = float(holding.get("institution_value") or 0)
+    actual_covered_value = current_value * covered_quantity / holding_quantity
+    covered_basis = sum(item["basis"] for item in modeled)
+    benchmark_value = sum(item["benchmark_value"] for item in modeled)
+    return {
+        "status": "available",
+        "benchmark": benchmark,
+        "as_of": latest["date"],
+        "covered_lots": len(modeled),
+        "total_lots": len(lots),
+        "basis_covered": _money(covered_basis),
+        "actual_covered_value": _money(actual_covered_value),
+        "benchmark_value": _money(benchmark_value),
+        "excess_value": _money(actual_covered_value - benchmark_value),
+        "actual_return_percent": round(
+            100 * (actual_covered_value / covered_basis - 1),
+            2,
+        )
+        if covered_basis
+        else None,
+        "benchmark_return_percent": round(
+            100 * (benchmark_value / covered_basis - 1),
+            2,
+        )
+        if covered_basis
+        else None,
+        "definition": definition,
+        "limitations": [
+            "Actual value is allocated to covered lots by current share quantity.",
+            "The comparison depends on stored adjusted total-return benchmark observations and reported acquisition dates and basis.",
+            "Taxes, trading costs, and position-level cash distributions not reflected in current value are excluded.",
+        ],
+    }
+
+
 @router.get("/api/private/investments/positions")
 def investment_positions(request: Request) -> dict:
     owner = require_owner(request)
@@ -117,6 +228,11 @@ def investment_positions(request: Request) -> dict:
         if current is None or preference(candidate) > preference(current):
             holdings_by_position[position_key] = candidate
     tax_lots = _active_records(storage, owner, "tax_lot")
+    spy_benchmark_points = [
+        item
+        for item in _active_records(storage, owner, "benchmark_observation")
+        if item.get("symbol") == "SPY"
+    ]
     for lot in tax_lots:
         source_account = str(lot.get("account_id") or "")
         candidates = [
@@ -297,6 +413,17 @@ def investment_positions(request: Request) -> dict:
                 for lot in tax_lots
             ),
         }
+        matching_lots = [
+            lot
+            for lot in tax_lots
+            if lot.get("linked_account_id") == holding["account_id"]
+            and lot.get("symbol") == holding.get("ticker_symbol")
+        ]
+        holding["benchmark_comparison"] = _holding_benchmark_comparison(
+            holding,
+            matching_lots,
+            spy_benchmark_points,
+        )
     return {
         "currency": "USD",
         "summary": {

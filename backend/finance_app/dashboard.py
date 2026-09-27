@@ -208,6 +208,116 @@ def _billing_alerts(transactions: list[dict], accounts: list[dict]) -> list[dict
     return sorted(alerts, key=lambda item: item.get("date") or "", reverse=True)
 
 
+def _net_worth_attribution(
+    *,
+    account_by_key: dict[str, dict],
+    balance_history: dict[str, list[dict]],
+    assets: list[dict],
+    comparison_date: date,
+    ending_net_worth: float,
+    operating_surplus: float,
+) -> dict:
+    opening_cash = 0.0
+    opening_investments = 0.0
+    opening_cards = 0.0
+    expected = 0
+    covered = 0
+    sources = []
+    for key, account in account_by_key.items():
+        account_type = account.get("type")
+        if account_type not in {"depository", "credit", "investment"}:
+            continue
+        if account_type == "investment" and is_custodial_account(account):
+            continue
+        expected += 1
+        eligible = [
+            item
+            for item in balance_history.get(key, [])
+            if str(item.get("observed_at", ""))[:10]
+            and date.fromisoformat(str(item["observed_at"])[:10])
+            <= comparison_date
+        ]
+        if not eligible:
+            continue
+        observation = max(eligible, key=lambda item: item.get("observed_at", ""))
+        value = float(observation.get("current") or 0)
+        covered += 1
+        sources.append(account.get("name") or key.split(":", 1)[-1])
+        if account_type == "depository":
+            opening_cash += value
+        elif account_type == "credit":
+            opening_cards += max(value, 0)
+        else:
+            opening_investments += value
+
+    opening_assets = 0.0
+    opening_asset_debt = 0.0
+    for asset in assets:
+        expected += 1
+        history = [*asset.get("valuation_history", []), asset.get("valuation", {})]
+        eligible = [
+            item
+            for item in history
+            if item.get("valued_at")
+            and date.fromisoformat(str(item["valued_at"])[:10])
+            <= comparison_date
+        ]
+        if not eligible:
+            continue
+        valuation = max(eligible, key=lambda item: item.get("valued_at", ""))
+        opening_assets += float(valuation.get("amount") or 0)
+        opening_asset_debt += float(asset["ownership"].get("debt_balance") or 0)
+        covered += 1
+        sources.append(asset.get("name") or asset.get("kind", "household asset"))
+
+    coverage = _coverage(covered, expected, sources)
+    opening_net_worth = (
+        opening_cash
+        + opening_investments
+        + opening_assets
+        - opening_cards
+        - opening_asset_debt
+    )
+    change = ending_net_worth - opening_net_worth
+    residual = change - operating_surplus
+    available = expected > 0 and covered == expected
+    return {
+        "available": available,
+        "period": {
+            "label": "One year",
+            "start": comparison_date.isoformat(),
+        },
+        "opening_net_worth": _money(opening_net_worth) if available else None,
+        "ending_net_worth": _money(ending_net_worth),
+        "change": _money(change) if available else None,
+        "direction": (
+            "stronger" if change > 0 else "weaker" if change < 0 else "unchanged"
+        )
+        if available
+        else "not_yet_measurable",
+        "drivers": [
+            {
+                "key": "operating_surplus",
+                "label": "Income minus personal spending",
+                "value": _money(operating_surplus),
+                "definition": "Classified trailing-12-month income minus adjusted personal spending; transfers and refunds are not income.",
+            },
+            {
+                "key": "valuation_and_balance_change",
+                "label": "Market, valuation, and liability change",
+                "value": _money(residual) if available else None,
+                "definition": "The reconciled remainder after household operating surplus, including investment returns, asset revaluations, liability changes, and any timing differences.",
+            },
+        ],
+        "reconciliation_difference": 0.0 if available else None,
+        "coverage": coverage,
+        "limitations": [
+            "Asset debt uses the currently registered debt balance because historical loan balances are not yet stored."
+        ]
+        + ([] if available else ["A full one-year opening snapshot is not available for every current household account and asset."]),
+    }
+
+
 @router.get("/api/private/dashboard")
 def financial_dashboard(request: Request) -> dict:
     owner = require_owner(request)
@@ -351,6 +461,15 @@ def financial_dashboard(request: Request) -> dict:
 
     raw_spending = accounting_metrics["finalized_spending"]["raw"]
     adjusted = accounting_metrics["finalized_spending"]["adjusted"]
+    operating_surplus = _money(accounting_metrics["income"] - adjusted)
+    net_worth_change = _net_worth_attribution(
+        account_by_key=account_by_key,
+        balance_history=balance_history,
+        assets=assets,
+        comparison_date=latest_transaction_date - timedelta(days=365),
+        ending_net_worth=net_worth,
+        operating_surplus=operating_surplus,
+    )
     return {
         "currency": "USD",
         "generated_at": datetime.now(UTC).isoformat(),
@@ -361,13 +480,11 @@ def financial_dashboard(request: Request) -> dict:
             "end": latest_transaction_date.isoformat(),
         },
         "metrics": metrics,
+        "net_worth_change": net_worth_change,
         "sections": {
             "cash_flow": {
                 **accounting_metrics["cash_flow"],
-                "operating_surplus": _money(
-                    accounting_metrics["income"]
-                    - accounting_metrics["finalized_spending"]["adjusted"]
-                ),
+                "operating_surplus": operating_surplus,
                 "available": bool(cash_rows),
                 "context": (
                     "Observed bank movement is not profit or loss. Brokerage funding and card payments reduce bank cash while moving value or settling purchases counted elsewhere."
