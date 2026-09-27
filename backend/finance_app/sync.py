@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, Header, HTTPException, Request
 
 from .auth import require_owner
+from .assets import refresh_due_asset_valuations
 from .plaid_provider import PlaidProviderError
 
 
@@ -215,12 +216,18 @@ def nightly_reconcile(request: Request, x_internal_key: str | None = Header(defa
     expected = os.environ.get("FINANCE_INTERNAL_KEY")
     if not expected or x_internal_key != expected:
         raise HTTPException(status_code=401, detail="invalid internal credential")
-    results = [sync_connection(request, item) for item in request.app.state.storage.list_all_connections() if item["status"] != "disconnected"]
+    connections = request.app.state.storage.list_all_connections()
+    results = [sync_connection(request, item) for item in connections if item["status"] != "disconnected"]
+    owners = sorted({item["owner"] for item in connections})
+    asset_valuations = {
+        owner: refresh_due_asset_valuations(request, owner) for owner in owners
+    }
     raw_replies_purged = request.app.state.storage.purge_expired_email_reply_raw(
         datetime.now(UTC)
     )
     return {
         "connections": results,
+        "asset_valuations": asset_valuations,
         "raw_email_replies_purged": raw_replies_purged,
     }
 

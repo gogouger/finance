@@ -367,6 +367,10 @@ def update_asset_valuation(
 def refresh_asset_valuations(asset_id: str, request: Request) -> dict:
     owner = require_owner(request)
     asset = _asset(request, owner, asset_id)
+    return _refresh_asset_valuations(request, owner, asset)
+
+
+def _refresh_asset_valuations(request: Request, owner: str, asset: dict) -> dict:
     provider = _valuation_provider(request)
     now = datetime.now(UTC)
     automation = asset.get("valuation_automation", {})
@@ -426,6 +430,18 @@ def refresh_asset_valuations(asset_id: str, request: Request) -> dict:
         "terms": provider.terms(),
         "estimates": [_observation_with_freshness(item) for item in estimates],
     }
+
+
+def refresh_due_asset_valuations(request: Request, owner: str) -> list[dict]:
+    """Refresh each asset through its cache-aware provider for unattended jobs."""
+    return [
+        {
+            "asset_id": asset["id"],
+            "kind": asset["kind"],
+            "status": _refresh_asset_valuations(request, owner, asset)["status"],
+        }
+        for asset in _assets(request, owner)
+    ]
 
 
 @router.patch("/api/private/assets/{asset_id}/cost-links/{transaction_id}")

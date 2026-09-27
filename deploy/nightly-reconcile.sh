@@ -24,6 +24,7 @@ with urllib.request.urlopen(request, timeout=300) as response:
 print(
     "finance reconciliation complete: "
     f"connections={len(result.get('connections', []))} "
+    f"asset_valuations={sum(len(items) for items in result.get('asset_valuations', {}).values())} "
     f"expired_raw_replies_purged={result.get('raw_email_replies_purged', 0)}"
 )
 PY
