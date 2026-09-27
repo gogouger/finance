@@ -37,7 +37,7 @@ export function FinanceNav() {
   return <>
     <a className="skip-link" href="#main-content">Skip to main content</a>
     <nav aria-label="Primary navigation">
-      <a className="brand" href="/" aria-label="Finance home">F<span>inance</span></a>
+      <a className="brand" href="/" aria-label="Finance home"><small>GG /</small> Finance</a>
       <div className="nav-links">
         {authenticated ? <>
           <a href="/dashboard">Dashboard</a>
@@ -45,8 +45,8 @@ export function FinanceNav() {
         </> : <a href="/preview">Dashboard demo</a>}
         <a href="/housing">House</a>
         <a href="/retirement">Retirement</a>
+        <a className="nav-portfolio" href="https://gordongouger.com/projects.html">All projects</a>
         {authenticated ? <form method="post" action="/oauth2/logout"><button type="submit">Sign out</button></form> : <a className="nav-primary" href="/dashboard">Owner sign in</a>}
-        <a className="nav-portfolio" href="https://gordongouger.com/projects.html">Portfolio ↗</a>
       </div>
     </nav>
     <span id="main-content" tabIndex={-1} />
