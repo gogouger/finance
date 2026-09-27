@@ -1,4 +1,5 @@
 import base64
+import html
 import hashlib
 import hmac
 import json
@@ -12,7 +13,7 @@ from typing import Any, Literal
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Request, Response
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field, field_validator
 
 from .accounting import build_accounting_view
@@ -112,6 +113,43 @@ def _public_grant(grant: dict) -> dict:
     }
 
 
+def _create_grant_record(payload: "GrantCreate", request: Request, owner: str) -> tuple[dict, str]:
+    now = _now()
+    authorization_code = secrets.token_urlsafe(32)
+    grant = {
+        "id": str(uuid4()),
+        "client_id": payload.client_id,
+        "client_name": payload.client_name,
+        "resource": _resource_uri(request),
+        "redirect_uri": payload.redirect_uri,
+        "scopes": payload.scopes,
+        "status": "active",
+        "created_at": now.isoformat(),
+        "authorization_code_hash": _hash(authorization_code),
+        "authorization_code_expires_at": (now + AUTHORIZATION_CODE_LIFETIME).isoformat(),
+        "code_challenge": payload.code_challenge,
+        "code_challenge_method": payload.code_challenge_method,
+        "access_token_hash": None,
+        "access_token_expires_at": None,
+        "refresh_token_hash": None,
+        "refresh_token_expires_at": None,
+    }
+    request.app.state.storage.save_mcp_grant(owner, grant)
+    request.app.state.storage.append_audit(
+        owner,
+        {
+            "action": "mcp.grant.created",
+            "resource_type": "mcp_grant",
+            "resource_id": grant["id"],
+            "client_name": grant["client_name"],
+            "scopes": grant["scopes"],
+            "outcome": "success",
+            "occurred_at": now.isoformat(),
+        },
+    )
+    return grant, authorization_code
+
+
 def _redact(value: Any) -> Any:
     if isinstance(value, dict):
         return {
@@ -166,7 +204,7 @@ def oauth_discovery(request: Request) -> dict:
     issuer = _issuer(request)
     return {
         "issuer": issuer,
-        "authorization_endpoint": f"{issuer}/api/private/mcp/grants",
+        "authorization_endpoint": f"{issuer}/mcp/oauth/authorize",
         "token_endpoint": f"{issuer}/mcp/oauth/token",
         "grant_types_supported": ["authorization_code", "refresh_token"],
         "response_types_supported": ["code"],
@@ -203,6 +241,71 @@ class DynamicClientRegistration(BaseModel):
         return values
 
 
+def _authorization_payload(values: dict[str, str], request: Request) -> tuple[GrantCreate, str]:
+    if values.get("response_type") != "code":
+        raise HTTPException(status_code=422, detail="response_type=code is required")
+    resource = values.get("resource")
+    if resource and resource.rstrip("/") != _resource_uri(request):
+        raise HTTPException(status_code=422, detail="resource must match this MCP endpoint")
+    try:
+        payload = GrantCreate(
+            client_id=values.get("client_id", ""),
+            # Dynamic clients may provide a display name in the authorization
+            # request; the consent screen never hides the stable client ID.
+            client_name=values.get("client_name") or values.get("client_id", ""),
+            redirect_uri=values.get("redirect_uri", ""),
+            scopes=values.get("scope", "").split(),
+            code_challenge=values.get("code_challenge", ""),
+            code_challenge_method=values.get("code_challenge_method", ""),
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail="invalid authorization request") from error
+    return payload, values.get("state", "")
+
+
+def _redirect_uri(uri: str, values: dict[str, str]) -> str:
+    parsed = urllib.parse.urlsplit(uri)
+    query = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+    query.extend((key, value) for key, value in values.items() if value)
+    return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path, urllib.parse.urlencode(query), parsed.fragment))
+
+
+@router.get("/mcp/oauth/authorize")
+def authorization_consent(request: Request) -> HTMLResponse:
+    require_fresh_owner(request)
+    values = {key: value for key, value in request.query_params.items()}
+    payload, state = _authorization_payload(values, request)
+    hidden = {
+        "response_type": "code", "client_id": payload.client_id,
+        "client_name": payload.client_name, "redirect_uri": payload.redirect_uri,
+        "scope": " ".join(payload.scopes), "code_challenge": payload.code_challenge,
+        "code_challenge_method": payload.code_challenge_method, "state": state,
+        "resource": _resource_uri(request),
+    }
+    fields = "".join(
+        f'<input type="hidden" name="{html.escape(key)}" value="{html.escape(value)}">'
+        for key, value in hidden.items()
+    )
+    scopes = "".join(f"<li>{html.escape(scope)}</li>" for scope in payload.scopes)
+    page = f"""<!doctype html><html lang=\"en\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Approve personal data access</title><style>body{{font:16px system-ui,sans-serif;max-width:680px;margin:8vh auto;padding:0 24px;color:#17211c}}main{{border:1px solid #cdd9d0;border-radius:14px;padding:28px}}code{{word-break:break-all}}li{{margin:.4rem 0}}button{{font:inherit;padding:.7rem 1rem;border-radius:8px;border:1px solid #245b38;background:#245b38;color:#fff;cursor:pointer}}button[name=\"decision\"][value=\"deny\"]{{margin-left:.6rem;background:#fff;color:#245b38}}</style><main><p>Personal MCP connection</p><h1>Approve read-only access?</h1><p><strong>{html.escape(payload.client_name)}</strong> is requesting a connection to your personal data gateway.</p><p>Client ID: <code>{html.escape(payload.client_id)}</code></p><h2>Requested scopes</h2><ul>{scopes}</ul><p>This creates a separately revocable connection. It cannot change accounts, transactions, books, or training data.</p><form method=\"post\" action=\"/mcp/oauth/authorize\">{fields}<button name=\"decision\" value=\"approve\">Approve connection</button><button name=\"decision\" value=\"deny\">Deny</button></form></main></html>"""
+    return HTMLResponse(page, headers={"Cache-Control": "no-store"})
+
+
+@router.post("/mcp/oauth/authorize")
+async def authorization_approve(request: Request) -> RedirectResponse:
+    require_fresh_owner(request)
+    body = (await request.body()).decode("utf-8", "replace")
+    values = {key: items[-1] for key, items in urllib.parse.parse_qs(body, keep_blank_values=True).items()}
+    payload, state = _authorization_payload(values, request)
+    if values.get("decision") != "approve":
+        return RedirectResponse(_redirect_uri(payload.redirect_uri, {"error": "access_denied", "state": state}), status_code=302)
+    _, authorization_code = _create_grant_record(payload, request, require_fresh_owner(request))
+    return RedirectResponse(
+        _redirect_uri(payload.redirect_uri, {"code": authorization_code, "state": state, "iss": _issuer(request)}),
+        status_code=302,
+    )
+
+
 @router.post("/mcp/oauth/register", status_code=201)
 def dynamic_client_registration(
     payload: DynamicClientRegistration, request: Request
@@ -222,39 +325,7 @@ def dynamic_client_registration(
 @router.post("/api/private/mcp/grants")
 def create_grant(payload: GrantCreate, request: Request) -> dict:
     owner = require_fresh_owner(request)
-    now = _now()
-    authorization_code = secrets.token_urlsafe(32)
-    grant = {
-        "id": str(uuid4()),
-        "client_id": payload.client_id,
-        "client_name": payload.client_name,
-        "resource": _resource_uri(request),
-        "redirect_uri": payload.redirect_uri,
-        "scopes": payload.scopes,
-        "status": "active",
-        "created_at": now.isoformat(),
-        "authorization_code_hash": _hash(authorization_code),
-        "authorization_code_expires_at": (now + AUTHORIZATION_CODE_LIFETIME).isoformat(),
-        "code_challenge": payload.code_challenge,
-        "code_challenge_method": payload.code_challenge_method,
-        "access_token_hash": None,
-        "access_token_expires_at": None,
-        "refresh_token_hash": None,
-        "refresh_token_expires_at": None,
-    }
-    request.app.state.storage.save_mcp_grant(owner, grant)
-    request.app.state.storage.append_audit(
-        owner,
-        {
-            "action": "mcp.grant.created",
-            "resource_type": "mcp_grant",
-            "resource_id": grant["id"],
-            "client_name": grant["client_name"],
-            "scopes": grant["scopes"],
-            "outcome": "success",
-            "occurred_at": now.isoformat(),
-        },
-    )
+    grant, authorization_code = _create_grant_record(payload, request, owner)
     return {
         "grant_id": grant["id"],
         "client_name": grant["client_name"],

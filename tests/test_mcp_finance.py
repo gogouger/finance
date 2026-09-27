@@ -165,6 +165,7 @@ def test_oauth_discovery_short_lived_tokens_rotation_and_revocation(mcp_service)
         )
     )
     assert discovery["token_endpoint"].endswith("/mcp/oauth/token")
+    assert discovery["authorization_endpoint"].endswith("/mcp/oauth/authorize")
     assert discovery["grant_types_supported"] == ["authorization_code", "refresh_token"]
     assert discovery["code_challenge_methods_supported"] == ["S256"]
 
@@ -209,6 +210,32 @@ def test_oauth_discovery_short_lived_tokens_rotation_and_revocation(mcp_service)
     with pytest.raises(urllib.error.HTTPError) as revoked:
         _call(mcp_service, rotated["access_token"], "finance.summary")
     assert revoked.value.code == 401
+
+
+def test_passkey_fresh_authorization_screen_displays_scoped_consent(mcp_service):
+    query = urllib.parse.urlencode(
+        {
+            "response_type": "code",
+            "client_id": "claude-desktop-test",
+            "client_name": "Claude Desktop test",
+            "redirect_uri": "http://127.0.0.1:8765/oauth/callback",
+            "scope": "athletics:training:summary library:reading:metrics",
+            "code_challenge": CHALLENGE,
+            "code_challenge_method": "S256",
+            "state": "csrf-state",
+            "resource": f"{mcp_service}/mcp",
+        }
+    )
+    request = urllib.request.Request(
+        f"{mcp_service}/mcp/oauth/authorize?{query}",
+        headers=_fresh_owner(),
+    )
+    with urllib.request.urlopen(request) as response:
+        page = response.read().decode()
+    assert "Approve read-only access?" in page
+    assert "Claude Desktop test" in page
+    assert "athletics:training:summary" in page
+    assert "library:reading:metrics" in page
 
 
 def test_default_tools_are_aggregate_redacted_and_unknown_scopes_are_rejected(mcp_service):
