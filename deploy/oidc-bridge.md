@@ -65,8 +65,10 @@ process. It reuses the Finance image, publishes no host port, has no data-volume
 mount, and joins only `finance_edge`. When the bridge is deployed, that network
 must contain exactly Caddy, Finance, and the bridge; update the base network
 migration evidence accordingly. Store its environment at
-`/opt/data/finance/oidc-bridge.env`, owned by root with mode `0600`. The live
-owner username is `ggouger`; keep this synchronized with Authelia's file-backed
-user and the Finance OIDC authorization policy. Sensitive
+`/opt/data/finance/oidc-bridge.env`, owned by root with mode `0600`. Bind the
+live owner allowlist to Authelia's signed, stable OIDC `sub`; `preferred_username`
+is a UserInfo profile claim and is not a stable ID-token identity key. Keep the
+Authelia authorization policy separately restricted to `user:ggouger` for
+defense in depth. Sensitive
 route classification is repeated inside the bridge so proxy-matcher drift
 cannot bypass the five-minute step-up policy.
