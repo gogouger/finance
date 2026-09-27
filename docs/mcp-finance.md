@@ -6,9 +6,39 @@ Finance, Athletic Analytics, and Library. It does not expose SQL, arbitrary
 record queries, provider credentials, account numbers, property identifiers,
 GPS routes, per-activity timestamps, purchase prices, or mutation tools.
 
+## Connect an agent
+
+The server URL is `https://finance.gordongouger.com/mcp`. It uses Streamable
+HTTP, OAuth PKCE, and dynamic client registration; there is no reusable
+personal API key to copy between devices.
+
+For Codex CLI, add it once on each computer and then open the browser-based
+login. Codex creates a device-specific client registration automatically; the
+approval page requires a freshly verified passkey and displays the requested
+scopes before creating the separately revocable grant.
+
+```sh
+codex mcp add personal-gateway --url https://finance.gordongouger.com/mcp
+codex mcp login personal-gateway --oauth-client-registration dcr
+```
+
+In Codex Desktop or the IDE extension, add a **Streamable HTTP** server using
+the same URL, save it, and choose **Authenticate**. Other MCP clients should
+use the same OAuth DCR + S256 PKCE flow. A portless `127.0.0.1` loopback
+callback may use the client’s temporary local port during approval; every
+other redirect URI must match its registration exactly.
+
 ## OAuth client grants
 
-OAuth metadata is available at `/.well-known/oauth-authorization-server`. An owner creates a named client-installation grant through the passkey-protected consent boundary at `POST /api/private/mcp/grants`. The grant accepts only the explicit scopes documented below and requires an S256 PKCE challenge. The one-use authorization code is exchanged at the form-encoded OAuth token endpoint, `/mcp/oauth/token`, without a permanent client secret.
+OAuth metadata is available at `/.well-known/oauth-authorization-server`.
+The gateway stores the registered client name and redirect URI list encrypted,
+then binds the consent screen and authorization code to that exact metadata.
+The private grant route remains available for controlled integrations, but
+normal Codex and other DCR-capable clients should use the browser approval
+flow. The grant accepts only the explicit scopes documented below and requires
+an S256 PKCE challenge. The one-use authorization code is exchanged at the
+form-encoded OAuth token endpoint, `/mcp/oauth/token`, without a permanent
+client secret.
 
 Access tokens live for ten minutes. Refresh tokens live for thirty days and rotate on every use; replaying an old refresh token fails. Only hashes of authorization codes and tokens are stored inside the encrypted database. A freshly passkey-authenticated owner can revoke one named grant immediately at `DELETE /api/private/mcp/grants/{grant_id}`.
 

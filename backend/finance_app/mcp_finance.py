@@ -244,6 +244,36 @@ class DynamicClientRegistration(BaseModel):
         return unique
 
 
+def _registered_redirect_matches(registered_uri: str, requested_uri: str) -> bool:
+    """Match a registered OAuth redirect without weakening loopback PKCE flows.
+
+    Native MCP clients may register a portless 127.0.0.1 callback and bind an
+    ephemeral local port when they actually open the browser. RFC 8252 permits
+    that one substitution. All other components still have to be identical;
+    HTTPS callbacks and registrations with an explicit port remain exact.
+    """
+    if hmac.compare_digest(registered_uri, requested_uri):
+        return True
+    registered = urllib.parse.urlsplit(registered_uri)
+    requested = urllib.parse.urlsplit(requested_uri)
+    try:
+        registered_port = registered.port
+        requested_port = requested.port
+    except ValueError:
+        return False
+    loopback_hosts = {"127.0.0.1", "::1"}
+    return (
+        registered.scheme == requested.scheme == "http"
+        and registered.hostname in loopback_hosts
+        and requested.hostname == registered.hostname
+        and registered_port is None
+        and requested_port is not None
+        and registered.path == requested.path
+        and registered.query == requested.query
+        and registered.fragment == requested.fragment
+    )
+
+
 def _authorization_payload(values: dict[str, str], request: Request) -> tuple[GrantCreate, str]:
     if values.get("response_type") != "code":
         raise HTTPException(status_code=422, detail="response_type=code is required")
@@ -255,7 +285,10 @@ def _authorization_payload(values: dict[str, str], request: Request) -> tuple[Gr
     if client is None:
         raise HTTPException(status_code=422, detail="MCP client is not registered")
     redirect_uri = values.get("redirect_uri", "")
-    if redirect_uri not in client.get("redirect_uris", []):
+    if not any(
+        _registered_redirect_matches(registered, redirect_uri)
+        for registered in client.get("redirect_uris", [])
+    ):
         raise HTTPException(status_code=422, detail="redirect_uri is not registered for this MCP client")
     try:
         payload = GrantCreate(

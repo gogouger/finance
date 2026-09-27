@@ -145,6 +145,19 @@ def _register_client(base_url: str, *, name: str = "Claude Desktop test") -> dic
     )
 
 
+def _register_client_with_redirect(base_url: str, redirect_uri: str) -> dict:
+    return _json(
+        _request(
+            f"{base_url}/mcp/oauth/register",
+            {
+                "client_name": "Codex loopback test",
+                "redirect_uris": [redirect_uri],
+            },
+            method="POST",
+        )
+    )
+
+
 def _exchange(base_url: str, grant: dict):
     return _json(
         _token_request(
@@ -322,6 +335,29 @@ def test_dynamic_registration_binds_consent_to_registered_redirect_uri(mcp_servi
             )
         )
     assert rejected.value.code == 422
+
+
+def test_dynamic_registration_allows_only_variable_port_for_portless_loopback(mcp_service):
+    registered = _register_client_with_redirect(
+        mcp_service, "http://127.0.0.1/callback/codex-device"
+    )
+    query = urllib.parse.urlencode(
+        {
+            "response_type": "code",
+            "client_id": registered["client_id"],
+            "redirect_uri": "http://127.0.0.1:43917/callback/codex-device",
+            "scope": "finance:summary",
+            "code_challenge": CHALLENGE,
+            "code_challenge_method": "S256",
+            "resource": f"{mcp_service}/mcp",
+        }
+    )
+    with urllib.request.urlopen(
+        urllib.request.Request(
+            f"{mcp_service}/mcp/oauth/authorize?{query}", headers=_fresh_owner()
+        )
+    ) as response:
+        assert "Codex loopback test" in response.read().decode()
 
 
 def test_default_tools_are_aggregate_redacted_and_unknown_scopes_are_rejected(mcp_service):
