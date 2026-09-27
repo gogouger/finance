@@ -34,6 +34,8 @@ type McpGrant = {
   status: "active" | "revoked";
   created_at: string;
   last_used_at?: string | null;
+  access_token_expires_at?: string | null;
+  refresh_token_expires_at?: string | null;
   revoked_at?: string | null;
 };
 
@@ -341,7 +343,7 @@ export function Connections() {
           <div className="connection-list">
             {grants.map((grant) => (
               <article key={grant.id}>
-                <div><p className="eyebrow">{grant.status === "active" ? "active read-only grant" : "revoked grant"}</p><h3>{grant.client_name}</h3><p>{grant.scopes.join(" · ")}</p><small>Created {new Date(grant.created_at).toLocaleString()} · Last used {grant.last_used_at ? new Date(grant.last_used_at).toLocaleString() : "not yet"}</small></div>
+                <div><p className="eyebrow">{grant.status === "active" ? "active read-only grant" : "revoked grant"}</p><h3>{grant.client_name}</h3><p>{grant.scopes.join(" · ")}</p><small>Created {new Date(grant.created_at).toLocaleString()} · Last used {grant.last_used_at ? new Date(grant.last_used_at).toLocaleString() : "not yet"}{grant.refresh_token_expires_at ? ` · Refresh access ends ${new Date(grant.refresh_token_expires_at).toLocaleString()}` : " · Waiting for its first token exchange"}</small></div>
                 <div className="connection-state"><span className={`freshness freshness-${grant.status === "active" ? "current" : "stale"}`}>{grant.status}</span></div>
                 <div className="connection-actions">{grant.status === "active" && <button className="secondary-button" type="button" disabled={working !== null} onClick={() => void revokeGrant(grant)}>{working === `grant:${grant.id}` ? "Revoking…" : "Revoke"}</button>}</div>
               </article>

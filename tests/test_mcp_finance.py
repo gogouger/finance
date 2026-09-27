@@ -158,6 +158,11 @@ def _call(base_url: str, access_token: str, tool: str, arguments=None):
     )
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001
+        return None
+
+
 def test_oauth_discovery_short_lived_tokens_rotation_and_revocation(mcp_service):
     discovery = _json(
         urllib.request.Request(
@@ -236,6 +241,50 @@ def test_passkey_fresh_authorization_screen_displays_scoped_consent(mcp_service)
     assert "Claude Desktop test" in page
     assert "athletics:training:summary" in page
     assert "library:reading:metrics" in page
+    assert "Access tokens expire after 10 minutes" in page
+
+    form = urllib.parse.urlencode(
+        {
+            "response_type": "code",
+            "client_id": "claude-desktop-test",
+            "client_name": "Claude Desktop test",
+            "redirect_uri": "http://127.0.0.1:8765/oauth/callback",
+            "scope": "athletics:training:summary library:reading:metrics",
+            "code_challenge": CHALLENGE,
+            "code_challenge_method": "S256",
+            "state": "csrf-state",
+            "resource": f"{mcp_service}/mcp",
+            "decision": "approve",
+        }
+    ).encode()
+    approval = urllib.request.Request(
+        f"{mcp_service}/mcp/oauth/authorize",
+        data=form,
+        headers={"Content-Type": "application/x-www-form-urlencoded", **_fresh_owner()},
+        method="POST",
+    )
+    with pytest.raises(urllib.error.HTTPError) as redirected:
+        urllib.request.build_opener(_NoRedirect).open(approval)
+    assert redirected.value.code == 302
+    callback = urllib.parse.urlsplit(redirected.value.headers["Location"])
+    values = dict(urllib.parse.parse_qsl(callback.query))
+    assert callback.netloc == "127.0.0.1:8765"
+    assert values["state"] == "csrf-state"
+    assert values["iss"] == mcp_service
+
+    tokens = _json(
+        _token_request(
+            mcp_service,
+            {
+                "grant_type": "authorization_code",
+                "code": values["code"],
+                "client_id": "claude-desktop-test",
+                "redirect_uri": "http://127.0.0.1:8765/oauth/callback",
+                "code_verifier": VERIFIER,
+            },
+        )
+    )
+    assert tokens["scope"] == "athletics:training:summary library:reading:metrics"
 
 
 def test_default_tools_are_aggregate_redacted_and_unknown_scopes_are_rejected(mcp_service):

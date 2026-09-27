@@ -107,6 +107,8 @@ def _public_grant(grant: dict) -> dict:
             "status",
             "created_at",
             "last_used_at",
+            "access_token_expires_at",
+            "refresh_token_expires_at",
             "revoked_at",
         )
         if key in grant
@@ -287,7 +289,7 @@ def authorization_consent(request: Request) -> HTMLResponse:
         for key, value in hidden.items()
     )
     scopes = "".join(f"<li>{html.escape(scope)}</li>" for scope in payload.scopes)
-    page = f"""<!doctype html><html lang=\"en\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Approve personal data access</title><style>body{{font:16px system-ui,sans-serif;max-width:680px;margin:8vh auto;padding:0 24px;color:#17211c}}main{{border:1px solid #cdd9d0;border-radius:14px;padding:28px}}code{{word-break:break-all}}li{{margin:.4rem 0}}button{{font:inherit;padding:.7rem 1rem;border-radius:8px;border:1px solid #245b38;background:#245b38;color:#fff;cursor:pointer}}button[name=\"decision\"][value=\"deny\"]{{margin-left:.6rem;background:#fff;color:#245b38}}</style><main><p>Personal MCP connection</p><h1>Approve read-only access?</h1><p><strong>{html.escape(payload.client_name)}</strong> is requesting a connection to your personal data gateway.</p><p>Client ID: <code>{html.escape(payload.client_id)}</code></p><h2>Requested scopes</h2><ul>{scopes}</ul><p>This creates a separately revocable connection. It cannot change accounts, transactions, books, or training data.</p><form method=\"post\" action=\"/mcp/oauth/authorize\">{fields}<button name=\"decision\" value=\"approve\">Approve connection</button><button name=\"decision\" value=\"deny\">Deny</button></form></main></html>"""
+    page = f"""<!doctype html><html lang=\"en\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Approve personal data access</title><style>body{{font:16px system-ui,sans-serif;max-width:680px;margin:8vh auto;padding:0 24px;color:#17211c}}main{{border:1px solid #cdd9d0;border-radius:14px;padding:28px}}code{{word-break:break-all}}li{{margin:.4rem 0}}button{{font:inherit;padding:.7rem 1rem;border-radius:8px;border:1px solid #245b38;background:#245b38;color:#fff;cursor:pointer}}button[name=\"decision\"][value=\"deny\"]{{margin-left:.6rem;background:#fff;color:#245b38}}</style><main><p>Personal MCP connection</p><h1>Approve read-only access?</h1><p><strong>{html.escape(payload.client_name)}</strong> is requesting a connection to your personal data gateway.</p><p>Client ID: <code>{html.escape(payload.client_id)}</code></p><h2>Requested scopes</h2><ul>{scopes}</ul><p>Access tokens expire after 10 minutes. The refresh connection expires after 30 days and rotates every time it is used.</p><p>This creates a separately revocable connection. It cannot change accounts, transactions, books, or training data.</p><form method=\"post\" action=\"/mcp/oauth/authorize\">{fields}<button name=\"decision\" value=\"approve\">Approve connection</button><button name=\"decision\" value=\"deny\">Deny</button></form></main></html>"""
     return HTMLResponse(page, headers={"Cache-Control": "no-store"})
 
 
