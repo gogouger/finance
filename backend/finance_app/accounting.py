@@ -254,6 +254,14 @@ def build_accounting_view(
     depository_credits = Decimal("0")
     depository_debits = Decimal("0")
     depository_refund_credits = Decimal("0")
+    depository_income_credits = Decimal("0")
+    depository_transfer_credits = Decimal("0")
+    depository_other_credits = Decimal("0")
+    depository_purchase_debits = Decimal("0")
+    depository_card_payment_debits = Decimal("0")
+    depository_investment_transfer_debits = Decimal("0")
+    depository_other_transfer_debits = Decimal("0")
+    depository_other_debits = Decimal("0")
     card_refund_credits = Decimal("0")
     card_payments = Decimal("0")
     spending_by_category: dict[str, Decimal] = {}
@@ -302,10 +310,27 @@ def build_accounting_view(
         if not pending and not is_credit_account:
             if amount > 0:
                 depository_debits += amount
+                if accounting_type == "spending":
+                    depository_purchase_debits += amount
+                elif accounting_type == "credit_card_payment":
+                    depository_card_payment_debits += amount
+                elif accounting_type == "internal_transfer":
+                    if detailed == "TRANSFER_OUT_INVESTMENT_AND_RETIREMENT_FUNDS":
+                        depository_investment_transfer_debits += amount
+                    else:
+                        depository_other_transfer_debits += amount
+                else:
+                    depository_other_debits += amount
             elif amount < 0:
                 depository_credits += -amount
                 if accounting_type == "refund":
                     depository_refund_credits += -amount
+                elif accounting_type == "income":
+                    depository_income_credits += -amount
+                elif accounting_type == "internal_transfer":
+                    depository_transfer_credits += -amount
+                else:
+                    depository_other_credits += -amount
         elif not pending and is_credit_account:
             if accounting_type == "refund":
                 card_refund_credits += -amount
@@ -395,6 +420,16 @@ def build_accounting_view(
                 "depository_debits": _money(depository_debits),
                 "net": _money(depository_credits - depository_debits),
                 "refund_credits": _money(depository_refund_credits),
+                "income_credits": _money(depository_income_credits),
+                "transfer_credits": _money(depository_transfer_credits),
+                "other_credits": _money(depository_other_credits),
+                "purchase_debits": _money(depository_purchase_debits),
+                "card_payment_debits": _money(depository_card_payment_debits),
+                "investment_transfer_debits": _money(
+                    depository_investment_transfer_debits
+                ),
+                "other_transfer_debits": _money(depository_other_transfer_debits),
+                "other_debits": _money(depository_other_debits),
                 "excludes_credit_accounts": True,
             },
             "credit_card_activity": {

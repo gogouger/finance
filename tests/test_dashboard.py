@@ -184,6 +184,9 @@ def test_owner_sees_explainable_metrics_from_normalized_records(
     assert dashboard["sections"]["cash_flow"]["net"] == 1748
     assert dashboard["sections"]["cash_flow"]["depository_credits"] == 2500
     assert dashboard["sections"]["cash_flow"]["refund_credits"] == 0
+    assert dashboard["sections"]["cash_flow"]["income_credits"] == 2000
+    assert dashboard["sections"]["cash_flow"]["card_payment_debits"] == 200
+    assert dashboard["sections"]["cash_flow"]["operating_surplus"] == 1698
     assert dashboard["sections"]["cash_flow"]["available"] is True
     assert dashboard["sections"]["adjusted_spending"]["value"] == 302
     assert dashboard["sections"]["adjusted_spending"]["excluded_from_personal"] == 100

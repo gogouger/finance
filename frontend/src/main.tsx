@@ -171,6 +171,15 @@ type DashboardResult = {
       depository_debits: number;
       net: number;
       refund_credits: number;
+      income_credits: number;
+      transfer_credits: number;
+      other_credits: number;
+      purchase_debits: number;
+      card_payment_debits: number;
+      investment_transfer_debits: number;
+      other_transfer_debits: number;
+      other_debits: number;
+      operating_surplus: number;
       available: boolean;
       context: string;
     };
@@ -1220,17 +1229,33 @@ function Dashboard() {
               </div>
               <div className="flow-compare">
                 <article>
-                  <span>Depository movement · trailing 12 months</span>
+                  <span>Household operating surplus · trailing 12 months</span>
                   <strong>
                     {dashboard.sections.cash_flow.available
-                      ? money.format(dashboard.sections.cash_flow.net)
+                      ? money.format(dashboard.sections.cash_flow.operating_surplus)
                       : "Not available yet"}
                   </strong>
                   {dashboard.sections.cash_flow.available && <p>
-                    {money.format(dashboard.sections.cash_flow.depository_credits)} bank credits ·{" "}
-                    {money.format(dashboard.sections.cash_flow.depository_debits)} bank debits
+                    Classified income minus adjusted personal spending
                   </p>}
                   <small>{dashboard.sections.cash_flow.context}</small>
+                  {dashboard.sections.cash_flow.available && <details>
+                    <summary>Reconcile observed bank movement</summary>
+                    <p>
+                      <strong>{money.format(dashboard.sections.cash_flow.net)}</strong>{" "}
+                      observed bank movement: {money.format(dashboard.sections.cash_flow.depository_credits)} credits minus{" "}
+                      {money.format(dashboard.sections.cash_flow.depository_debits)} debits.
+                    </p>
+                    <ul>
+                      <li>{money.format(dashboard.sections.cash_flow.income_credits)} income credits</li>
+                      <li>{money.format(dashboard.sections.cash_flow.transfer_credits)} transfer credits</li>
+                      <li>{money.format(dashboard.sections.cash_flow.refund_credits)} refund credits</li>
+                      <li>{money.format(dashboard.sections.cash_flow.purchase_debits)} direct bank purchases</li>
+                      <li>{money.format(dashboard.sections.cash_flow.card_payment_debits)} card payments</li>
+                      <li>{money.format(dashboard.sections.cash_flow.investment_transfer_debits)} moved to investments</li>
+                      <li>{money.format(dashboard.sections.cash_flow.other_transfer_debits)} other transfer debits</li>
+                    </ul>
+                  </details>}
                 </article>
                 <article>
                   <span>Adjusted personal spending · trailing 12 months</span>

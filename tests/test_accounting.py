@@ -155,6 +155,14 @@ def test_unmatched_credit_card_payment_and_credit_are_not_income():
         "depository_debits": 0,
         "net": 0,
         "refund_credits": 0,
+        "income_credits": 0,
+        "transfer_credits": 0,
+        "other_credits": 0,
+        "purchase_debits": 0,
+        "card_payment_debits": 0,
+        "investment_transfer_debits": 0,
+        "other_transfer_debits": 0,
+        "other_debits": 0,
         "excludes_credit_accounts": True,
     }
     assert result["metrics"]["credit_card_activity"] == {
@@ -344,8 +352,39 @@ def test_transfers_and_card_payments_stay_visible_without_becoming_spending(
         "depository_debits": 752,
         "net": 1748,
         "refund_credits": 0,
+        "income_credits": 2000,
+        "transfer_credits": 500,
+        "other_credits": 0,
+        "purchase_debits": 52,
+        "card_payment_debits": 200,
+        "investment_transfer_debits": 0,
+        "other_transfer_debits": 500,
+        "other_debits": 0,
         "excludes_credit_accounts": True,
     }
+
+
+def test_investment_funding_is_separated_from_spending_and_bank_loss():
+    rows = [
+        {
+            "transaction_id": "brokerage-funding",
+            "account_id": "checking",
+            "date": "2026-09-01",
+            "name": "Brokerage transfer",
+            "amount": 5000,
+            "pending": False,
+            "personal_finance_category": {
+                "primary": "TRANSFER_OUT",
+                "detailed": "TRANSFER_OUT_INVESTMENT_AND_RETIREMENT_FUNDS",
+            },
+        }
+    ]
+
+    result = build_accounting_view(rows)
+
+    assert result["metrics"]["finalized_spending"]["adjusted"] == 0
+    assert result["metrics"]["cash_flow"]["net"] == -5000
+    assert result["metrics"]["cash_flow"]["investment_transfer_debits"] == 5000
 
 
 def test_refund_corrects_original_category_but_keeps_receipt_cash_date(
