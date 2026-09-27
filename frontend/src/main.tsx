@@ -130,12 +130,16 @@ type RetirementInputs = {
   retirement_ordinary_tax_rate_percent: number;
   capital_gains_tax_rate_percent: number;
   employer_match: number;
+  employee_contribution_for_full_match: number;
   traditional_contribution_limit: number;
   roth_contribution_limit: number;
   hsa_contribution_limit: number;
   qualified_hsa_spending_percent: number;
   annual_conversion_amount: number;
   sepp_annual_distribution: number;
+  return_stddev_percent: number;
+  uncertainty_simulations: number;
+  uncertainty_seed: number;
   ruleset: {
     version: string;
     effective_date: string;
@@ -176,6 +180,29 @@ type RetirementResult = {
     caveat: string;
   }>;
   ranking: Array<{ key: string; label: string; after_tax_value: number }>;
+  optimized_mix: {
+    annual_take_home_cost: number;
+    annual_allocations: Record<"traditional" | "roth" | "hsa" | "taxable", number>;
+    employer_match: number;
+    match_protected: boolean;
+    bridge: { required_annual_taxable_saving: number; planned_annual_taxable_saving: number; projected_accessible_at_retirement: number; projected_gap: number };
+    at_retirement: { headline_balance: number; after_tax_value: number; by_account_after_tax: Record<string, number> };
+    allocation_order: string[];
+  };
+  uncertainty: {
+    model_version: string;
+    seed: number;
+    simulations: number;
+    success_probability_percent: number;
+    ending_balance_distribution: Record<"p10" | "p25" | "p50" | "p75" | "p90", number>;
+    first_failure_age_distribution: Record<string, number> | null;
+    sequence_risk: Record<string, number>;
+    yearly: Array<{ age: number; p10: number; p50: number; p90: number; path_success_percent: number }>;
+    stress_case: { name: string; success_probability_percent: number; change_from_baseline_points: number };
+    assumptions: { starting_wealth_basis: string; social_security_included: boolean; pension_income_included: boolean; healthcare_costs_included: boolean; return_distribution: string };
+    exclusions: string[];
+    disclaimer: string;
+  };
   bridge: {
     years: number;
     annual_spending_at_retirement: number;
@@ -469,12 +496,16 @@ const retirementDefaults: RetirementInputs = {
   retirement_ordinary_tax_rate_percent: 12,
   capital_gains_tax_rate_percent: 15,
   employer_match: 3000,
+  employee_contribution_for_full_match: 6000,
   traditional_contribution_limit: 24500,
   roth_contribution_limit: 24500,
   hsa_contribution_limit: 8750,
   qualified_hsa_spending_percent: 15,
   annual_conversion_amount: 30000,
   sepp_annual_distribution: 25000,
+  return_stddev_percent: 15,
+  uncertainty_simulations: 300,
+  uncertainty_seed: 42,
   ruleset: {
     version: "illustrative-us-2026-v1",
     effective_date: "2026-01-01",
@@ -908,6 +939,7 @@ function Retirement() {
             <Slider label="Current ordinary tax rate" value={inputs.current_ordinary_tax_rate_percent} min={0} max={50} step={1} format={(v) => `${v}%`} change={update("current_ordinary_tax_rate_percent")} />
             <Slider label="Retirement ordinary tax rate" value={inputs.retirement_ordinary_tax_rate_percent} min={0} max={50} step={1} format={(v) => `${v}%`} change={update("retirement_ordinary_tax_rate_percent")} />
             <Slider label="Annual employer match" value={inputs.employer_match} min={0} max={25000} step={500} format={(v) => `${money.format(v)}/yr`} change={update("employer_match")} />
+            <Slider label="Employee contribution for full match" value={inputs.employee_contribution_for_full_match} min={0} max={25000} step={500} format={(v) => `${money.format(v)}/yr`} change={update("employee_contribution_for_full_match")} />
             <details className="housing-advanced"><summary>Contribution limits</summary>
               <Slider label="Traditional workplace limit" value={inputs.traditional_contribution_limit} min={1000} max={100000} step={500} format={money.format} change={update("traditional_contribution_limit")} />
               <Slider label="Roth path limit" value={inputs.roth_contribution_limit} min={1000} max={100000} step={500} format={money.format} change={update("roth_contribution_limit")} />
@@ -935,6 +967,7 @@ function Retirement() {
             <p>Inflation and tax rules can change over decades. This run pins a dated illustrative ruleset so a future update changes an assumption—not history.</p>
             <Slider label="Plan through age" value={inputs.end_age} min={inputs.retirement_age + 1} max={110} step={1} format={(v) => `${v}`} change={update("end_age")} />
             <Slider label="Inflation" value={inputs.inflation_percent} min={0} max={10} step={0.25} format={(v) => `${v}%/yr`} change={update("inflation_percent")} />
+            <Slider label="Return volatility" value={inputs.return_stddev_percent} min={0} max={35} step={1} format={(v) => `${v}% standard deviation`} change={update("return_stddev_percent")} />
             <Slider label="Unrestricted access age" value={inputs.ruleset.unrestricted_access_age} min={50} max={75} step={0.5} format={(v) => `${v}`} change={updateRule("unrestricted_access_age")} />
             <Slider label="Early-withdrawal penalty" value={inputs.ruleset.early_withdrawal_penalty_percent} min={0} max={30} step={1} format={(v) => `${v}%`} change={updateRule("early_withdrawal_penalty_percent")} />
             <button type="submit" disabled={running}>{running ? "Updating…" : "Refresh comparison"}</button>

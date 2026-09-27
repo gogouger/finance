@@ -9,6 +9,10 @@ from .early_retirement import EarlyRetirementInputs, compare_early_access_strate
 from .housing import HousingInputs, calculate_housing
 from .household import HouseholdPlan, project_household
 from .retirement import RetirementInputs, calculate_retirement
+from .retirement_comparison import (
+    RetirementComparisonInputs,
+    compare_retirement_choices,
+)
 from .retirement_optimizer import (
     RetirementOptimizationInputs,
     optimize_retirement_contributions,
@@ -24,6 +28,7 @@ RULESETS = {
     "housing": "housing-core-2026-09-25",
     "housing_advanced": "housing-complete-2026-09-25",
     "retirement": "retirement-baseline-2026-09-25",
+    "retirement_comparison": "retirement-comparison-v1",
     "household": "household-life-events-v1",
     "retirement_uncertainty": "retirement-uncertainty-v1",
 }
@@ -31,6 +36,7 @@ ScenarioCalculator = Literal[
     "housing",
     "housing_advanced",
     "retirement",
+    "retirement_comparison",
     "retirement_optimizer",
     "early_retirement",
     "household",
@@ -73,6 +79,10 @@ def calculate_scenario(calculator: str, inputs: dict[str, Any]) -> dict[str, Any
         return calculate_housing(HousingInputs.model_validate(inputs))
     if calculator == "retirement":
         return calculate_retirement(RetirementInputs.model_validate(inputs))
+    if calculator == "retirement_comparison":
+        return compare_retirement_choices(
+            RetirementComparisonInputs.model_validate(inputs)
+        )
     if calculator == "retirement_optimizer":
         return optimize_retirement_contributions(
             RetirementOptimizationInputs.model_validate(inputs)
@@ -141,6 +151,15 @@ def _outcomes(scenario: dict[str, Any]) -> dict[str, float]:
         final = output["years"][-1]
         keys = ("total_balance", "spendable_after_tax", "unmet_spending")
         return {key: final[key] for key in keys}
+    if calculator == "retirement_comparison":
+        output_ranking = output["ranking"]
+        return {
+            "best_after_tax_value": output_ranking[0]["after_tax_value"],
+            "bridge_gap": output["bridge"]["existing_gap"],
+            "optimized_after_tax_value": output["optimized_mix"][
+                "at_retirement"
+            ]["after_tax_value"],
+        }
     if calculator == "retirement_optimizer":
         return {
             "employer_match": output["employer_match"],

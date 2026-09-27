@@ -88,12 +88,16 @@ def _inputs(**overrides) -> dict:
         "retirement_ordinary_tax_rate_percent": 12,
         "capital_gains_tax_rate_percent": 15,
         "employer_match": 3_000,
+        "employee_contribution_for_full_match": 6_000,
         "traditional_contribution_limit": 24_500,
         "roth_contribution_limit": 24_500,
         "hsa_contribution_limit": 8_750,
         "qualified_hsa_spending_percent": 15,
         "annual_conversion_amount": 30_000,
         "sepp_annual_distribution": 25_000,
+        "return_stddev_percent": 12,
+        "uncertainty_simulations": 100,
+        "uncertainty_seed": 42,
         "ruleset": {
             "version": "illustrative-us-2026-v1",
             "effective_date": "2026-01-01",
@@ -132,6 +136,25 @@ def test_comparison_holds_take_home_sacrifice_constant(running_service: str):
     assert strategies["traditional"]["annual_primary_contribution"] > 20_000
     assert strategies["traditional"]["employer_match"] == 3_000
     assert all(item["years"] for item in strategies.values())
+    assert result["optimized_mix"]["annual_take_home_cost"] == 20_000
+    assert result["optimized_mix"]["employer_match"] == 3_000
+    assert result["optimized_mix"]["match_protected"] is True
+    assert sum(
+        result["optimized_mix"]["annual_allocations"].values()
+    ) > 20_000
+    assert result["uncertainty"]["simulations"] == 100
+    assert 0 <= result["uncertainty"]["success_probability_percent"] <= 100
+    assert result["uncertainty"]["ending_balance_distribution"]["p10"] <= (
+        result["uncertainty"]["ending_balance_distribution"]["p50"]
+    ) <= result["uncertainty"]["ending_balance_distribution"]["p90"]
+    assert result["uncertainty"]["assumptions"] == {
+        "starting_wealth_basis": "estimated after-tax spendable value at retirement",
+        "social_security_included": False,
+        "pension_income_included": False,
+        "healthcare_costs_included": False,
+        "return_distribution": "independent annual normal returns",
+    }
+    assert len(result["uncertainty"]["exclusions"]) == 3
 
 
 def test_age_45_result_explains_bridge_and_access_constraints(

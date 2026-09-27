@@ -256,6 +256,26 @@ type RetirementComparisonResult = {
     at_retirement: { age: number; headline_balance: number; after_tax_value: number; accessible_basis: number };
   }>;
   ranking: Array<{ key: string; label: string; after_tax_value: number }>;
+  optimized_mix: {
+    annual_allocations: Record<"traditional" | "roth" | "hsa" | "taxable", number>;
+    employer_match: number;
+    match_protected: boolean;
+    bridge: { projected_gap: number };
+    at_retirement: { after_tax_value: number };
+    allocation_order: string[];
+  };
+  uncertainty: {
+    simulations: number;
+    success_probability_percent: number;
+    ending_balance_distribution: { p10: number; p25: number; p50: number; p75: number; p90: number };
+    first_failure_age_distribution: Record<string, number> | null;
+    sequence_risk: Record<string, number>;
+    yearly: Array<{ age: number; p10: number; p50: number; p90: number; path_success_percent: number }>;
+    stress_case: { name: string; success_probability_percent: number; change_from_baseline_points: number };
+    assumptions: { starting_wealth_basis: string; social_security_included: boolean; pension_income_included: boolean; healthcare_costs_included: boolean; return_distribution: string };
+    exclusions: string[];
+    disclaimer: string;
+  };
   bridge: { years: number; annual_spending_at_retirement: number; required_spending: number; accessible_at_retirement: number; existing_gap: number };
   early_access: {
     ruleset: { version: string; effective_date: string };
@@ -357,7 +377,9 @@ export function RetirementComparisonVisuals({ result, stage = 0 }: { result: Ret
     <div className={`story-callout ${result.bridge.existing_gap > 0 ? "warning" : ""}`}><strong>{best ? `${best.label} leads by modeled spendable value at ${result.retirement_age}.` : "Building the ranking."}</strong><span>{result.bridge.existing_gap > 0 ? `The taxable-saving path leaves a ${money.format(result.bridge.existing_gap)} bridge gap.` : "The taxable-saving path covers the modeled bridge."}</span></div>
     <label className="year-scrubber"><span>Explain age {selectedAge}</span><input type="range" min={0} max={maxIndex} value={index} onChange={(event) => setSelected(Number(event.target.value))} /></label>
     <article className="housing-stage-evidence" aria-live="polite"><p className="eyebrow">{active.eyebrow}</p><h4>{active.title}</h4><p>{active.note}</p><dl>{active.evidence.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{money.format(value)}</dd></div>)}</dl></article>
+    {(stage === 2 || stage === 4) && <article className="optimized-mix"><div><p className="eyebrow">Practical mix</p><h4>Protect the match, then fund access.</h4><span>{result.optimized_mix.match_protected ? "Full modeled match protected" : "Take-home budget cannot protect the full match"}</span></div><dl>{Object.entries(result.optimized_mix.annual_allocations).map(([account, amount]) => <div key={account}><dt>{account}</dt><dd>{money.format(amount)}/yr</dd></div>)}<div><dt>Employer match</dt><dd>{money.format(result.optimized_mix.employer_match)}/yr</dd></div><div><dt>Projected bridge gap</dt><dd>{money.format(result.optimized_mix.bridge.projected_gap)}</dd></div></dl></article>}
     {stage === 4 && <div className="access-paths" aria-label="Early access strategy status">{result.early_access.strategies.map((item) => <p key={item.strategy} className={item.eligible ? "eligible" : "ineligible"}><span>{accessLabels[item.strategy] || item.strategy}</span><strong>{item.eligible ? money.format(item.spendable_value) : "Not eligible"}</strong></p>)}</div>}
+    {stage === 5 && <article className="uncertainty-card"><div><p className="eyebrow">{result.uncertainty.simulations} return paths</p><h4>{result.uncertainty.success_probability_percent}% fund every modeled year</h4><span>Lower returns plus 10% more spending: {result.uncertainty.stress_case.success_probability_percent}%. Social Security, pensions, and healthcare are excluded until explicitly modeled.</span></div><div className="uncertainty-range"><p><span>Conservative</span><strong>{money.format(result.uncertainty.ending_balance_distribution.p10)}</strong></p><p><span>Middle</span><strong>{money.format(result.uncertainty.ending_balance_distribution.p50)}</strong></p><p><span>Optimistic</span><strong>{money.format(result.uncertainty.ending_balance_distribution.p90)}</strong></p></div></article>}
   </section>;
 }
 
