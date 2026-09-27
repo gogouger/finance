@@ -2,8 +2,11 @@ import base64
 import hashlib
 import hmac
 import json
+import os
 import secrets
 import urllib.parse
+import urllib.error
+import urllib.request
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, Literal
 from uuid import uuid4
@@ -32,6 +35,9 @@ FINANCE_SCOPES = {
     "finance:scenarios",
     "finance:transactions:detail",
 }
+ATHLETICS_SCOPES = {"athletics:training:summary"}
+LIBRARY_SCOPES = {"library:reading:metrics"}
+MCP_SCOPES = FINANCE_SCOPES | ATHLETICS_SCOPES | LIBRARY_SCOPES
 TOOL_SCOPES = {
     "finance.summary": "finance:summary",
     "finance.cash_flow_trend": "finance:summary",
@@ -41,6 +47,8 @@ TOOL_SCOPES = {
     "finance.scenarios.list": "finance:scenarios",
     "finance.scenario.calculate": "finance:scenarios",
     "finance.transactions.list": "finance:transactions:detail",
+    "athletics.training.summary": "athletics:training:summary",
+    "library.reading.metrics": "library:reading:metrics",
 }
 DIRECT_IDENTIFIER_KEYS = {
     "account_number",
@@ -138,12 +146,12 @@ class GrantCreate(BaseModel):
 
     @field_validator("scopes")
     @classmethod
-    def finance_scopes_only(cls, value: list[str]) -> list[str]:
+    def supported_scopes_only(cls, value: list[str]) -> list[str]:
         unique = sorted(set(value))
-        unsupported = set(unique) - FINANCE_SCOPES
+        unsupported = set(unique) - MCP_SCOPES
         if unsupported:
             raise ValueError(
-                f"unsupported or non-Finance scopes: {', '.join(sorted(unsupported))}"
+                f"unsupported MCP scopes: {', '.join(sorted(unsupported))}"
             )
         return unique
 
@@ -167,7 +175,7 @@ def oauth_discovery(request: Request) -> dict:
         "registration_endpoint": f"{issuer}/mcp/oauth/register",
         "require_pushed_authorization_requests": False,
         "authorization_response_iss_parameter_supported": True,
-        "scopes_supported": sorted(FINANCE_SCOPES),
+        "scopes_supported": sorted(MCP_SCOPES),
     }
 
 
@@ -177,7 +185,7 @@ def protected_resource_metadata(request: Request) -> dict:
     return {
         "resource": _resource_uri(request),
         "authorization_servers": [issuer],
-        "scopes_supported": sorted(FINANCE_SCOPES),
+        "scopes_supported": sorted(MCP_SCOPES),
         "bearer_methods_supported": ["header"],
     }
 
@@ -207,7 +215,7 @@ def dynamic_client_registration(
         "token_endpoint_auth_method": "none",
         "grant_types": ["authorization_code", "refresh_token"],
         "response_types": ["code"],
-        "scope": " ".join(sorted(FINANCE_SCOPES)),
+        "scope": " ".join(sorted(MCP_SCOPES)),
     }
 
 
@@ -474,8 +482,76 @@ def _date_range(arguments: dict) -> tuple[date, date]:
     return start, end
 
 
+def _module_json(base_url: str, path: str) -> dict:
+    """Fetch one fixed, internal module endpoint without accepting agent URLs.
+
+    The module base URL is deployment configuration, never a tool argument.
+    Keeping both the host and path server-owned prevents this gateway from
+    becoming an SSRF primitive while still letting it compose read-only views
+    from the separately deployed personal applications.
+    """
+    if not base_url:
+        raise HTTPException(status_code=503, detail="module is not configured")
+    parsed = urllib.parse.urlparse(base_url)
+    if parsed.scheme != "http" or not parsed.hostname:
+        raise HTTPException(status_code=503, detail="module configuration is invalid")
+    url = f"{base_url.rstrip('/')}{path}"
+    request = urllib.request.Request(
+        url,
+        headers={"Accept": "application/json", "User-Agent": "ggouger-personal-mcp/1.0"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=4) as response:
+            payload = response.read(256 * 1024 + 1)
+    except (urllib.error.URLError, TimeoutError, OSError) as error:
+        raise HTTPException(status_code=503, detail="module is temporarily unavailable") from error
+    if len(payload) > 256 * 1024:
+        raise HTTPException(status_code=503, detail="module response exceeded the safe limit")
+    try:
+        value = json.loads(payload)
+    except (json.JSONDecodeError, UnicodeDecodeError) as error:
+        raise HTTPException(status_code=503, detail="module returned an invalid response") from error
+    if not isinstance(value, dict):
+        raise HTTPException(status_code=503, detail="module returned an invalid response")
+    return value
+
+
+def _athletics_summary() -> dict:
+    source = _module_json(os.environ.get("ATHLETICS_MCP_BASE_URL", ""), "/api/public/summary")
+    if not source.get("ok"):
+        raise HTTPException(status_code=503, detail="Athletic Analytics summary is unavailable")
+    # This is intentionally the same aggregate-only projection as the public
+    # site preview—no routes, coordinates, timestamps, activity titles, or
+    # per-workout heart-rate data cross the personal MCP boundary.
+    keys = (
+        "activities", "runs", "lift_sessions", "total_miles", "run_miles",
+        "this_week_miles", "this_month_miles", "this_week_lift_sessions",
+        "this_month_lift_sessions", "longest_run_mi", "since",
+        "weekly_miles", "weekly_training", "lift_maxes", "big3_total",
+    )
+    return {key: source[key] for key in keys if key in source}
+
+
+def _library_metrics() -> dict:
+    owner = os.environ.get("BOOKS_MCP_OWNER", "")
+    if not owner or not owner.replace("-", "").replace("_", "").isalnum():
+        raise HTTPException(status_code=503, detail="Library module is not configured")
+    source = _module_json(
+        os.environ.get("BOOKS_MCP_BASE_URL", ""),
+        f"/{urllib.parse.quote(owner, safe='')}/metrics",
+    )
+    # The owner-less projection intentionally excludes purchase value and
+    # prices. It gives an agent enough context for reading analysis without
+    # turning Library into a secondary financial-data path.
+    keys = (
+        "counts", "tiers", "formats", "read_vs_listened", "categories",
+        "lifetime", "this_year", "by_year", "records", "authors", "rating_hist",
+    )
+    return {key: source[key] for key in keys if key in source}
+
+
 def _execute_tool(storage, owner: str, payload: ToolCall) -> tuple[dict, str, dict | None]:
-    accounting = _accounting(storage, owner)
+    accounting = _accounting(storage, owner) if payload.tool.startswith("finance.") else None
     if payload.tool == "finance.summary":
         return _summary(storage, owner), "aggregate", None
     if payload.tool == "finance.metric_definitions":
@@ -491,8 +567,10 @@ def _execute_tool(storage, owner: str, payload: ToolCall) -> tuple[dict, str, di
             }
         }, "aggregate", None
     if payload.tool == "finance.spending_breakdown":
+        assert accounting is not None
         return {"currency": "USD", "categories": accounting["metrics"]["spending_by_category"], "merchants_redacted": True}, "aggregate", None
     if payload.tool == "finance.cash_flow_trend":
+        assert accounting is not None
         monthly: dict[str, float] = {}
         for item in accounting["transactions"]:
             if item["status"] != "posted":
@@ -534,6 +612,7 @@ def _execute_tool(storage, owner: str, payload: ToolCall) -> tuple[dict, str, di
             raise HTTPException(status_code=422, detail=str(error)) from error
         return _redact(result), "calculated_scenario", None
     if payload.tool == "finance.transactions.list":
+        assert accounting is not None
         start, end = _date_range(payload.arguments)
         transactions = [
             {key: item[key] for key in ("id", "date", "amount", "merchant_name", "accounting_type", "category")}
@@ -542,7 +621,11 @@ def _execute_tool(storage, owner: str, payload: ToolCall) -> tuple[dict, str, di
         ]
         date_range = {"start": start.isoformat(), "end": end.isoformat()}
         return {"currency": "USD", "transactions": transactions}, "transaction_detail", date_range
-    raise HTTPException(status_code=404, detail="unknown Finance tool")
+    if payload.tool == "athletics.training.summary":
+        return _athletics_summary(), "aggregate_training", None
+    if payload.tool == "library.reading.metrics":
+        return _library_metrics(), "aggregate_library", None
+    raise HTTPException(status_code=404, detail="unknown MCP tool")
 
 
 def _call_finance_tool_for_grant(
@@ -624,6 +707,14 @@ MCP_TOOLS = {
             "additionalProperties": False,
         },
     },
+    "athletics.training.summary": {
+        "description": "Read aggregate running and lifting trends without routes, activity timestamps, titles, or per-workout detail.",
+        "inputSchema": {"type": "object", "additionalProperties": False},
+    },
+    "library.reading.metrics": {
+        "description": "Read aggregate reading and listening metrics without book purchase values or prices.",
+        "inputSchema": {"type": "object", "additionalProperties": False},
+    },
 }
 
 
@@ -699,8 +790,8 @@ async def mcp_streamable_http(request: Request) -> Response:
             {
                 "protocolVersion": MCP_PROTOCOL_VERSION,
                 "capabilities": {"tools": {"listChanged": False}},
-                "serverInfo": {"name": "Gordon Gouger Finance", "version": "1.0"},
-                "instructions": "Read-only personal Finance tools. Aggregate tools avoid direct identifiers; transaction detail requires an explicit bounded date range.",
+                "serverInfo": {"name": "Gordon Gouger Personal Data", "version": "1.1"},
+                "instructions": "Read-only personal Finance, Athletic Analytics, and Library tools. Aggregate tools avoid direct identifiers; financial transaction detail requires an explicit bounded date range.",
             },
         )
     if method == "tools/list":

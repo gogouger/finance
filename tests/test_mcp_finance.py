@@ -211,7 +211,7 @@ def test_oauth_discovery_short_lived_tokens_rotation_and_revocation(mcp_service)
     assert revoked.value.code == 401
 
 
-def test_default_tools_are_aggregate_redacted_and_finance_scopes_are_isolated(mcp_service):
+def test_default_tools_are_aggregate_redacted_and_unknown_scopes_are_rejected(mcp_service):
     with pytest.raises(urllib.error.HTTPError) as foreign_scope:
         _grant(mcp_service, ["finance:summary", "books:library"])
     assert foreign_scope.value.code == 422
@@ -322,7 +322,7 @@ def test_streamable_http_mcp_publishes_metadata_and_read_only_tools(mcp_service)
         )
     )
     assert initialized["result"]["protocolVersion"] == "2025-06-18"
-    assert initialized["result"]["serverInfo"]["name"] == "Gordon Gouger Finance"
+    assert initialized["result"]["serverInfo"]["name"] == "Gordon Gouger Personal Data"
 
     listed = _json(
         _request(
@@ -350,3 +350,34 @@ def test_streamable_http_mcp_publishes_metadata_and_read_only_tools(mcp_service)
     )
     assert called["result"]["isError"] is False
     assert called["result"]["structuredContent"]["data"]["currency"] == "USD"
+
+
+def test_central_gateway_only_lists_authorized_cross_project_tools(mcp_service):
+    grant = _grant(
+        mcp_service,
+        ["athletics:training:summary", "library:reading:metrics"],
+    )
+    tokens = _exchange(mcp_service, grant)
+    headers = {
+        "Authorization": f"Bearer {tokens['access_token']}",
+        "Accept": "application/json, text/event-stream",
+        "MCP-Protocol-Version": "2025-06-18",
+    }
+    listed = _json(
+        _request(
+            f"{mcp_service}/mcp",
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
+            method="POST",
+            headers=headers,
+        )
+    )
+    assert {item["name"] for item in listed["result"]["tools"]} == {
+        "athletics.training.summary",
+        "library.reading.metrics",
+    }
+
+    # Fixture deployments deliberately have no module URLs. The central
+    # gateway fails closed instead of accepting an agent-supplied destination.
+    with pytest.raises(urllib.error.HTTPError) as unavailable:
+        _call(mcp_service, tokens["access_token"], "athletics.training.summary")
+    assert unavailable.value.code == 503

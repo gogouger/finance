@@ -23,6 +23,12 @@ services:
         max-file: "3"
     env_file:
       - /opt/data/finance/settings.env
+    environment:
+      # Fixed internal, read-only module addresses used by the central MCP
+      # gateway. They are deliberately not supplied by MCP tool arguments.
+      ATHLETICS_MCP_BASE_URL: http://meron:8050
+      BOOKS_MCP_BASE_URL: http://books-api:80
+      BOOKS_MCP_OWNER: gordon
     volumes:
       - /opt/data/finance/data:/data
       - /opt/data/finance/backups:/backups
@@ -39,8 +45,15 @@ services:
       finance_edge:
         aliases:
           - finance
+      personal_apps: {}
 
 networks:
   finance_edge:
     external: true
     name: finance_edge
+  # The Finance gateway may make fixed, read-only requests to the Athletic
+  # Analytics and Library containers. This is the existing private app
+  # network; Caddy remains the only service exposing Finance publicly.
+  personal_apps:
+    external: true
+    name: ggouger_default
