@@ -28,10 +28,10 @@ services:
       # existing isolated edge network. It deliberately does not join the
       # shared app network, which would expose its header-authenticated APIs
       # to unrelated containers.
-      ATHLETICS_MCP_BASE_URL: http://caddy:80
-      BOOKS_MCP_BASE_URL: http://caddy:80
-      BOOKS_MCP_OWNER: gordon
-      MCP_MODULE_HOST: finance.gordongouger.com
+      ATHLETICS_MCP_BASE_URL: http://caddy:8088
+      BOOKS_MCP_BASE_URL: http://caddy:8088
+      BOOKS_MCP_OWNER: ggouger
+      MCP_MODULE_INTERNAL: "1"
     volumes:
       - /opt/data/finance/data:/data
       - /opt/data/finance/backups:/backups

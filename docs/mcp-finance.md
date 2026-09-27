@@ -33,8 +33,8 @@ Aggregate tools do not return merchant or transaction rows. Scenario responses r
 public project preview. `library.reading.metrics` uses Library's owner-less
 metrics projection, which omits purchase values and prices. Finance stays off
 the shared application network: Caddy accepts its module calls only from the
-isolated Finance edge network and proxies two fixed paths. Every authenticated
-tool call appends an audit event with the named client, grant, required scope,
+isolated Finance edge network and proxies two fixed paths over an un-published
+Docker-network listener. Every authenticated tool call appends an audit event with the named client, grant, required scope,
 tool, timestamp, requested date range, result sensitivity class, and outcome.
 Audit events exclude access tokens, financial amounts, provider payloads, and
 complete model conversations.

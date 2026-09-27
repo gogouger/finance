@@ -497,12 +497,13 @@ def _module_json(base_url: str, path: str) -> dict:
         raise HTTPException(status_code=503, detail="module configuration is invalid")
     url = f"{base_url.rstrip('/')}{path}"
     headers = {"Accept": "application/json", "User-Agent": "ggouger-personal-mcp/1.0"}
-    # Finance is isolated from the app network. When it reaches the fixed
-    # module bridge through Caddy, this preserves the virtual-host target
-    # without letting an MCP client influence either host or path.
+    # Finance is isolated from the app network. Its Caddy bridge is a private,
+    # un-published listener and the header is set only by deployment config;
+    # an MCP client cannot influence either host or path.
     host_header = os.environ.get("MCP_MODULE_HOST", "")
     if host_header:
         headers["Host"] = host_header
+    if os.environ.get("MCP_MODULE_INTERNAL") == "1":
         headers["X-Internal-MCP-Module"] = "1"
     request = urllib.request.Request(
         url,
@@ -525,7 +526,7 @@ def _module_json(base_url: str, path: str) -> dict:
 
 
 def _athletics_summary() -> dict:
-    source = _module_json(os.environ.get("ATHLETICS_MCP_BASE_URL", ""), "/api/internal/mcp/athletics/summary")
+    source = _module_json(os.environ.get("ATHLETICS_MCP_BASE_URL", ""), "/athletics/summary")
     if not source.get("ok"):
         raise HTTPException(status_code=503, detail="Athletic Analytics summary is unavailable")
     # This is intentionally the same aggregate-only projection as the public
@@ -546,7 +547,7 @@ def _library_metrics() -> dict:
         raise HTTPException(status_code=503, detail="Library module is not configured")
     source = _module_json(
         os.environ.get("BOOKS_MCP_BASE_URL", ""),
-        "/api/internal/mcp/library/metrics",
+        "/library/metrics",
     )
     # The owner-less projection intentionally excludes purchase value and
     # prices. It gives an agent enough context for reading analysis without
