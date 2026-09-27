@@ -316,6 +316,71 @@ def test_expected_recurring_costs_are_not_mislabelled_as_unusual(
     ]
 
 
+def test_dashboard_recommendations_have_evidence_and_remember_owner_feedback(
+    dashboard_service: str,
+):
+    fresh_owner = {**OWNER, "X-Auth-Time": str(time.time())}
+    _json(
+        _request(
+            f"{dashboard_service}/api/private/connections/plaid/exchange",
+            {
+                "public_token": "public-sandbox-opportunities",
+                "connection_type": "banking",
+                "display_name": "Opportunity fixture",
+                "institution_id": "ins_opportunities",
+                "institution_name": "Opportunity Bank",
+            },
+            method="POST",
+            headers=fresh_owner,
+        )
+    )
+    _json(
+        _request(
+            f"{dashboard_service}/api/internal/nightly-reconcile",
+            method="POST",
+            headers={"X-Internal-Key": "dashboard-internal-key"},
+        )
+    )
+
+    dashboard = _json(
+        _request(f"{dashboard_service}/api/private/dashboard", headers=OWNER)
+    )
+    recommendations = dashboard["recommendations"]
+    fee = next(
+        item
+        for item in recommendations["opportunities"]
+        if item["kind"] == "fees"
+    )
+    growth = next(
+        item
+        for item in recommendations["opportunities"]
+        if item["kind"] == "category_growth"
+    )
+    assert fee["estimated_impact"]["annual"] == 30
+    assert fee["confidence"]["level"] == "high"
+    assert fee["evidence"]
+    assert growth["estimated_impact"]["monthly"] > 300
+    assert "not a forecast" in fee["estimated_impact"]["investment_assumption"]
+    assert "No service is cancelled" in recommendations["method"]["boundaries"]
+
+    feedback = _json(
+        _request(
+            f"{dashboard_service}/api/private/recommendations/{fee['id']}/feedback",
+            {"action": "essential", "note": "This account is required."},
+            method="POST",
+            headers=OWNER,
+        )
+    )
+    assert feedback["action"] == "essential"
+
+    after = _json(
+        _request(f"{dashboard_service}/api/private/dashboard", headers=OWNER)
+    )["recommendations"]
+    assert fee["id"] not in {item["id"] for item in after["opportunities"]}
+    remembered = next(item for item in after["reviewed"] if item["id"] == fee["id"])
+    assert remembered["owner_feedback"]["action"] == "essential"
+
+
 def test_private_dashboard_page_ships_the_command_center_ui(
     dashboard_service: str,
 ):

@@ -263,6 +263,24 @@ type BillingAlert = {
   message: string;
   review_required: boolean;
 };
+type SpendingRecommendation = {
+  id: string;
+  kind: "fees" | "recurring_increase" | "category_growth";
+  subject: string;
+  title: string;
+  explanation: string;
+  suggested_action: string;
+  estimated_impact: {
+    monthly: number;
+    annual: number;
+    ten_year_investment_value: number;
+    investment_assumption: string;
+  };
+  confidence: { level: string; rationale: string };
+  evidence: Array<Record<string, unknown>>;
+  advisory_only: boolean;
+  owner_feedback: { action: string; note?: string | null; snoozed_until?: string | null; feedback_updated_at: string } | null;
+};
 type DashboardResult = {
   currency: "USD";
   generated_at: string;
@@ -284,6 +302,28 @@ type DashboardResult = {
     reconciliation_difference: number | null;
     coverage: { covered: number; total: number; percent: number; sources: string[] };
     limitations: string[];
+  };
+  retirement_readiness: {
+    available: boolean;
+    status: string;
+    scenario_id?: string;
+    scenario_name?: string;
+    created_at?: string;
+    retirement_age?: number;
+    success_probability_percent?: number | null;
+    stress_success_probability_percent?: number | null;
+    bridge_required?: number | null;
+    bridge_projected?: number | null;
+    bridge_gap?: number | null;
+    first_failure_age_median?: number | null;
+    explanation: string;
+    action_href: string;
+  };
+  recommendations: {
+    as_of: string;
+    opportunities: SpendingRecommendation[];
+    reviewed: SpendingRecommendation[];
+    method: { definition: string; boundaries: string };
   };
   sections: {
     cash_flow: {
@@ -1087,6 +1127,72 @@ function FinancialChangeStory({ dashboard }: { dashboard: DashboardResult }) {
   );
 }
 
+function RetirementReadiness({ readiness }: { readiness: DashboardResult["retirement_readiness"] }) {
+  if (!readiness.available) {
+    return <section className="dashboard-panel readiness-panel">
+      <div className="section-title"><div><p className="eyebrow">Retirement readiness</p><h2>Is the plan on track?</h2></div></div>
+      <strong className="readiness-pending">Needs a saved plan</strong>
+      <p>{readiness.explanation}</p>
+      <a className="dashboard-action" href={readiness.action_href}>Build retirement comparison</a>
+    </section>;
+  }
+  const probability = readiness.success_probability_percent ?? 0;
+  return <section className="dashboard-panel readiness-panel">
+    <div className="section-title"><div><p className="eyebrow">Retirement readiness</p><h2>Can this plan fund the years?</h2></div><strong>{probability}%</strong></div>
+    <div className="readiness-track" aria-label={`${probability}% of modeled paths fund every year`}><i style={{ width: `${probability}%` }} /></div>
+    <div className="readiness-details">
+      <p><span>Saved scenario</span><strong>{readiness.scenario_name}</strong></p>
+      {readiness.retirement_age != null && <p><span>Retire at</span><strong>Age {readiness.retirement_age}</strong></p>}
+      {readiness.bridge_gap != null && <p><span>Taxable bridge gap</span><strong>{readiness.bridge_gap > 0 ? money.format(readiness.bridge_gap) : "Covered"}</strong></p>}
+      {readiness.stress_success_probability_percent != null && <p><span>Lower-return stress case</span><strong>{readiness.stress_success_probability_percent}%</strong></p>}
+    </div>
+    <p className="visual-note">{readiness.explanation}</p>
+    <a className="dashboard-action" href={readiness.action_href}>Review retirement plan</a>
+  </section>;
+}
+
+function RecommendationQueue({ data, saved }: { data: DashboardResult["recommendations"]; saved: () => void }) {
+  const [working, setWorking] = useState<string | null>(null);
+  const [error, setError] = useState("");
+  const respond = async (item: SpendingRecommendation, action: "useful" | "essential" | "not_useful" | "later" | "incorrectly_categorized") => {
+    setWorking(item.id);
+    setError("");
+    const body: { action: string; snoozed_until?: string } = { action };
+    if (action === "later") {
+      const date = new Date();
+      date.setDate(date.getDate() + 90);
+      body.snoozed_until = date.toISOString().slice(0, 10);
+    }
+    try {
+      const response = await fetch(`/api/private/recommendations/${encodeURIComponent(item.id)}/feedback`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!response.ok) throw new Error("feedback unavailable");
+      saved();
+    } catch {
+      setError("Your feedback could not be saved. Try again before leaving this page.");
+    } finally {
+      setWorking(null);
+    }
+  };
+  return <section className="dashboard-panel recommendation-panel">
+    <div className="section-title"><div><p className="eyebrow">Decision queue</p><h2>What is worth a look?</h2></div><span>{data.opportunities.length} open</span></div>
+    <p className="quiet">{data.method.definition}</p>
+    {data.opportunities.length === 0 ? <div className="empty-signal"><strong>Nothing needs a recommendation right now</strong><p>That means no high-confidence fee, recurring-price, or sustained-spending signal is currently open.</p></div> : <div className="recommendation-list">{data.opportunities.slice(0, 5).map((item) => <article key={item.id}>
+      <div><span>{item.kind.replaceAll("_", " ")}</span><strong>{item.title}</strong></div>
+      <p>{item.explanation}</p>
+      <dl><div><dt>Potential annual impact</dt><dd>{money.format(item.estimated_impact.annual)}</dd></div><div><dt>Confidence</dt><dd>{item.confidence.level}</dd></div></dl>
+      <details><summary>Why this is here</summary><p>{item.suggested_action}</p><p>{item.confidence.rationale}</p><p>{item.estimated_impact.investment_assumption} If the full annual amount were invested, the illustrative 10-year value is {money.format(item.estimated_impact.ten_year_investment_value)}.</p></details>
+      <div className="recommendation-actions"><button type="button" onClick={() => void respond(item, "useful")} disabled={working === item.id}>Useful</button><button type="button" onClick={() => void respond(item, "essential")} disabled={working === item.id}>Essential</button><button type="button" onClick={() => void respond(item, "incorrectly_categorized")} disabled={working === item.id}>Wrong category</button><button type="button" onClick={() => void respond(item, "later")} disabled={working === item.id}>Later</button></div>
+    </article>)}</div>}
+    {data.reviewed.length > 0 && <details className="reviewed-recommendations"><summary>{data.reviewed.length} remembered decision{data.reviewed.length === 1 ? "" : "s"}</summary><div>{data.reviewed.map((item) => <p key={item.id}><strong>{item.title}</strong><span>{item.owner_feedback?.action.replaceAll("_", " ")}</span></p>)}</div></details>}
+    {error && <p className="inline-error" role="alert">{error}</p>}
+    <p className="visual-note">{data.method.boundaries}</p>
+  </section>;
+}
+
 function InvestmentOverview({ data: initialData }: { data: InvestmentResult }) {
   const [data, setData] = useState(initialData);
   const [lotImport, setLotImport] = useState<{ content: string; count: number } | null>(null);
@@ -1382,6 +1488,14 @@ function Dashboard() {
             </p>
           ))}
           <FinancialChangeStory dashboard={dashboard} />
+          <div className="dashboard-columns decision-columns">
+            <RetirementReadiness readiness={dashboard.retirement_readiness} />
+            <RecommendationQueue data={dashboard.recommendations} saved={() => {
+              void fetch("/api/private/dashboard")
+                .then((response) => response.ok ? response.json() as Promise<DashboardResult> : null)
+                .then((updated) => { if (updated) setDashboard(updated); });
+            }} />
+          </div>
           <section
             className="dashboard-metrics"
             aria-label="Financial overview"

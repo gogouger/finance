@@ -84,7 +84,13 @@ class FakePlaidProvider(PlaidProvider):
         suffix = next(
             (
                 marker
-                for marker in ("mutation", "investments", "accounting", "recurring")
+                for marker in (
+                    "mutation",
+                    "investments",
+                    "accounting",
+                    "recurring",
+                    "opportunities",
+                )
                 if marker in public_token
             ),
             str(uuid4()),
@@ -136,6 +142,46 @@ class FakePlaidProvider(PlaidProvider):
         return {"accounts": [{"account_id": "account-checking", "name": "Plaid Checking", "mask": "0000", "type": "depository", "subtype": "checking", "balances": {"current": 1250.0, "available": 1200.0, "limit": None, "iso_currency_code": "USD"}}]}
 
     def transactions_sync(self, access_token: str, cursor: str | None) -> dict[str, Any]:
+        if "opportunities" in access_token:
+            if cursor is not None:
+                return {"added": [], "modified": [], "removed": [], "next_cursor": cursor, "has_more": False}
+            common = {
+                "account_id": "account-checking",
+                "iso_currency_code": "USD",
+                "pending": False,
+            }
+            rows = [
+                ("groceries-mar", "2026-03-10", "Market Basket", 300.0, "FOOD_AND_DRINK", "FOOD_AND_DRINK_GROCERIES"),
+                ("groceries-apr", "2026-04-10", "Market Basket", 300.0, "FOOD_AND_DRINK", "FOOD_AND_DRINK_GROCERIES"),
+                ("groceries-may", "2026-05-10", "Market Basket", 310.0, "FOOD_AND_DRINK", "FOOD_AND_DRINK_GROCERIES"),
+                ("groceries-jun", "2026-06-10", "Market Basket", 610.0, "FOOD_AND_DRINK", "FOOD_AND_DRINK_GROCERIES"),
+                ("groceries-jul", "2026-07-10", "Market Basket", 610.0, "FOOD_AND_DRINK", "FOOD_AND_DRINK_GROCERIES"),
+                ("groceries-aug", "2026-08-10", "Market Basket", 630.0, "FOOD_AND_DRINK", "FOOD_AND_DRINK_GROCERIES"),
+                ("groceries-sep", "2026-09-10", "Market Basket", 620.0, "FOOD_AND_DRINK", "FOOD_AND_DRINK_GROCERIES"),
+                ("fee-aug", "2026-08-01", "Example Bank", 15.0, "BANK_FEES", "BANK_FEES_OTHER_BANK_FEES"),
+                ("fee-sep", "2026-09-01", "Example Bank", 15.0, "BANK_FEES", "BANK_FEES_OTHER_BANK_FEES"),
+            ]
+            return {
+                "added": [
+                    {
+                        **common,
+                        "transaction_id": transaction_id,
+                        "date": transaction_date,
+                        "name": merchant,
+                        "merchant_name": merchant,
+                        "amount": amount,
+                        "personal_finance_category": {
+                            "primary": primary,
+                            "detailed": detailed,
+                        },
+                    }
+                    for transaction_id, transaction_date, merchant, amount, primary, detailed in rows
+                ],
+                "modified": [],
+                "removed": [],
+                "next_cursor": "opportunities-v1",
+                "has_more": False,
+            }
         if "recurring" in access_token:
             if cursor is not None:
                 return {"added": [], "modified": [], "removed": [], "next_cursor": cursor, "has_more": False}

@@ -10,6 +10,7 @@ from .assets import effective_asset_valuation
 from .auth import require_owner
 from .classification import effective_classifications
 from .investment_scope import is_custodial_account
+from .recommendations import build_spending_opportunities
 
 
 router = APIRouter()
@@ -318,6 +319,61 @@ def _net_worth_attribution(
     }
 
 
+def _retirement_readiness(scenarios: list[dict]) -> dict:
+    supported = [
+        item
+        for item in scenarios
+        if item.get("calculator") in {"retirement_comparison", "retirement_uncertainty"}
+    ]
+    if not supported:
+        return {
+            "available": False,
+            "status": "scenario_required",
+            "explanation": "Save a Retirement comparison to connect the dashboard to an explicit retirement age, spending target, tax assumptions, and risk range.",
+            "action_href": "/retirement",
+        }
+    scenario = max(supported, key=lambda item: item.get("created_at", ""))
+    output = scenario.get("output") or {}
+    if scenario["calculator"] == "retirement_comparison":
+        uncertainty = output.get("uncertainty") or {}
+        bridge = output.get("optimized_mix", {}).get("bridge", {})
+        first_failure = uncertainty.get("first_failure_age_distribution") or {}
+        return {
+            "available": bool(uncertainty),
+            "status": "modeled" if uncertainty else "scenario_needs_refresh",
+            "scenario_id": scenario["id"],
+            "scenario_name": scenario.get("name", "Retirement comparison"),
+            "created_at": scenario.get("created_at"),
+            "retirement_age": output.get("retirement_age"),
+            "success_probability_percent": uncertainty.get("success_probability_percent"),
+            "stress_success_probability_percent": (uncertainty.get("stress_case") or {}).get("success_probability_percent"),
+            "bridge_required": (output.get("bridge") or {}).get("required_spending"),
+            "bridge_projected": bridge.get("projected_accessible_at_retirement"),
+            "bridge_gap": bridge.get("projected_gap"),
+            "first_failure_age_median": first_failure.get("p50"),
+            "explanation": "Readiness uses the latest saved Retirement comparison. It is scenario-based and does not silently replace its balances or assumptions with current dashboard data.",
+            "action_href": "/retirement",
+        }
+    baseline = (output.get("cases") or [{}])[0]
+    first_failure = baseline.get("first_failure_age_distribution") or {}
+    return {
+        "available": bool(baseline),
+        "status": "modeled" if baseline else "scenario_needs_refresh",
+        "scenario_id": scenario["id"],
+        "scenario_name": scenario.get("name", "Retirement uncertainty"),
+        "created_at": scenario.get("created_at"),
+        "retirement_age": (scenario.get("inputs") or {}).get("retirement_age"),
+        "success_probability_percent": baseline.get("success_probability_percent"),
+        "stress_success_probability_percent": None,
+        "bridge_required": None,
+        "bridge_projected": None,
+        "bridge_gap": None,
+        "first_failure_age_median": first_failure.get("p50"),
+        "explanation": "Readiness uses the latest saved retirement uncertainty scenario and preserves its dated inputs.",
+        "action_href": "/retirement",
+    }
+
+
 @router.get("/api/private/dashboard")
 def financial_dashboard(request: Request) -> dict:
     owner = require_owner(request)
@@ -470,6 +526,13 @@ def financial_dashboard(request: Request) -> dict:
         ending_net_worth=net_worth,
         operating_surplus=operating_surplus,
     )
+    recommendations = build_spending_opportunities(
+        full_accounting["transactions"],
+        obligations,
+        storage.list_financial_records(owner, "recommendation_feedback"),
+        as_of=latest_transaction_date,
+    )
+    retirement_readiness = _retirement_readiness(storage.list_scenarios(owner))
     return {
         "currency": "USD",
         "generated_at": datetime.now(UTC).isoformat(),
@@ -481,6 +544,8 @@ def financial_dashboard(request: Request) -> dict:
         },
         "metrics": metrics,
         "net_worth_change": net_worth_change,
+        "retirement_readiness": retirement_readiness,
+        "recommendations": recommendations,
         "sections": {
             "cash_flow": {
                 **accounting_metrics["cash_flow"],

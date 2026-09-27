@@ -27,6 +27,7 @@ from .retirement_comparison import router as retirement_comparison_router
 from .retirement_optimizer import router as retirement_optimizer_router
 from .retirement_uncertainty import router as retirement_uncertainty_router
 from .recurring import router as recurring_router
+from .recommendations import router as recommendations_router
 from .plaid_provider import create_plaid_provider
 from .payroll import router as payroll_router
 from .scenarios import router as scenarios_router
@@ -73,6 +74,7 @@ app.include_router(mcp_finance_router)
 app.include_router(operations_router)
 app.include_router(household_router)
 app.include_router(recurring_router)
+app.include_router(recommendations_router)
 app.include_router(retirement_optimizer_router)
 app.include_router(retirement_uncertainty_router)
 app.include_router(early_retirement_router)
