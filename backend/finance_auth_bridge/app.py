@@ -36,6 +36,8 @@ class Settings:
     redirect_uri: str
     post_logout_uri: str
     allow_http_for_tests: bool
+    allowed_subjects: frozenset[str]
+    allowed_usernames: frozenset[str]
     backchannel_url: str = ""
     session_seconds: int = 12 * 60 * 60
     freshness_seconds: int = 300
@@ -54,6 +56,20 @@ class Settings:
                 "FINANCE_OIDC_ALLOW_HTTP_FOR_TESTS", "false"
             ).lower()
             == "true",
+            allowed_subjects=frozenset(
+                value.strip()
+                for value in os.environ.get(
+                    "FINANCE_OIDC_ALLOWED_SUBJECTS", ""
+                ).split(",")
+                if value.strip()
+            ),
+            allowed_usernames=frozenset(
+                value.strip()
+                for value in os.environ.get(
+                    "FINANCE_OIDC_ALLOWED_USERNAMES", ""
+                ).split(",")
+                if value.strip()
+            ),
             backchannel_url=os.environ.get(
                 "FINANCE_OIDC_BACKCHANNEL_URL", ""
             ).rstrip("/"),
@@ -72,6 +88,8 @@ class Settings:
         missing = [name for name, value in required.items() if not value]
         if missing:
             raise OIDCError(f"missing OIDC bridge configuration: {', '.join(missing)}")
+        if not self.allowed_subjects and not self.allowed_usernames:
+            raise OIDCError("OIDC bridge owner allowlist is empty")
         for value in (self.issuer, self.redirect_uri, self.post_logout_uri):
             parsed = urllib.parse.urlparse(value)
             scheme = parsed.scheme
@@ -294,6 +312,7 @@ def _verified_claims(
     if claims.get("azp") != settings.client_id:
         raise OIDCError("ID token authorized party mismatch")
     subject = claims["sub"]
+    username = claims.get("preferred_username")
     auth_time = claims["auth_time"]
     amr = claims["amr"]
     if (
@@ -303,6 +322,10 @@ def _verified_claims(
         or any(ord(character) < 33 or ord(character) > 126 for character in subject)
     ):
         raise OIDCError("ID token subject is invalid")
+    if settings.allowed_subjects and subject not in settings.allowed_subjects:
+        raise OIDCError("ID token subject is not authorized")
+    if settings.allowed_usernames and username not in settings.allowed_usernames:
+        raise OIDCError("ID token username is not authorized")
     if isinstance(auth_time, bool) or not isinstance(auth_time, (int, float)):
         raise OIDCError("ID token auth_time is invalid")
     if auth_time <= 0 or auth_time > time.time():
@@ -337,6 +360,39 @@ def _auth_redirect(return_to: str, sensitive: bool) -> str:
     return "/oauth2/start?" + urllib.parse.urlencode(
         {"return_to": return_to, "sensitive": str(sensitive).lower()}
     )
+
+
+def _requires_fresh_auth(method: str, uri: str) -> bool:
+    """Classify sensitive requests at the trusted bridge boundary.
+
+    Caddy still sends its marker for compatibility, but this classifier keeps a
+    stale proxy matcher from weakening the step-up policy as new endpoints are
+    added.
+    """
+    path = urllib.parse.urlparse(uri).path
+    method = method.upper()
+    always_sensitive = (
+        "/api/private/security/fresh-check",
+        "/api/private/lifecycle/",
+        "/api/private/mcp/grants",
+        "/api/private/investments/imports/",
+    )
+    if path == always_sensitive[0] or any(
+        path.startswith(prefix) for prefix in always_sensitive[1:]
+    ):
+        return True
+    if path in {
+        "/api/private/payroll/approval",
+        "/api/private/payroll/link-token",
+        "/api/private/payroll/manual",
+        "/api/private/payroll/ingest",
+    }:
+        return True
+    if path.startswith("/api/private/connections/plaid/") and method == "POST":
+        return True
+    if path.startswith("/api/private/connections/") and method == "DELETE":
+        return True
+    return False
 
 
 @app.get("/health")
@@ -463,7 +519,12 @@ def authorize_request(request: Request):
         original_uri = _safe_return_to(original_uri)
     except HTTPException:
         original_uri = "/dashboard"
-    sensitive = request.headers.get("X-Auth-Require-Fresh", "").lower() == "true"
+    sensitive = (
+        request.headers.get("X-Auth-Require-Fresh", "").lower() == "true"
+        or _requires_fresh_auth(
+            request.headers.get("X-Forwarded-Method", "GET"), original_uri
+        )
+    )
     session = server_state.session(request.cookies.get(SESSION_COOKIE, ""))
     if session is None:
         return Response(

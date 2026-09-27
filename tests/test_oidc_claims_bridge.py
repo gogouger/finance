@@ -93,6 +93,7 @@ def oidc_services():
             "FINANCE_OIDC_CLIENT_SECRET": "test-client-secret",
             "FINANCE_OIDC_REDIRECT_URI": f"{bridge}/oauth2/callback",
             "FINANCE_OIDC_POST_LOGOUT_URI": f"{bridge}/logged-out",
+            "FINANCE_OIDC_ALLOWED_USERNAMES": "alice",
         },
     ) as bridge_process:
         _wait(issuer, idp_process)
@@ -191,6 +192,16 @@ def test_password_and_recovery_tokens_never_create_a_bridge_session(
     )
 
 
+def test_non_owner_token_never_creates_a_bridge_session(oidc_services):
+    issuer, bridge = oidc_services
+    _set_mode(issuer, "wrong_owner")
+    _, completed = _login(issuer, bridge)
+    assert completed.status == 401
+    assert "__Host-finance_oidc_session=" not in "\n".join(
+        completed.headers.get_all("Set-Cookie", [])
+    )
+
+
 def test_spoofed_identity_headers_without_a_server_session_are_denied(oidc_services):
     _, bridge = oidc_services
     denied = _response(
@@ -220,6 +231,32 @@ def test_sensitive_login_requests_max_age_and_rejects_stale_auth_time(oidc_servi
     )
     assert authorization_query["max_age"] == ["300"]
     assert completed.status == 401
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("POST", "/api/private/connections/plaid/link-token"),
+        ("POST", "/api/private/connections/plaid/exchange"),
+        ("DELETE", "/api/private/connections/item-1"),
+        ("POST", "/api/private/payroll/ingest"),
+    ],
+)
+def test_sensitive_routes_request_step_up_without_a_proxy_marker(
+    oidc_services, method, path
+):
+    _, bridge = oidc_services
+    denied = _response(
+        urllib.request.Request(
+            f"{bridge}/oauth2/auth",
+            headers={"X-Forwarded-Method": method, "X-Forwarded-Uri": path},
+        )
+    )
+    assert denied.status == 302
+    query = urllib.parse.parse_qs(
+        urllib.parse.urlparse(denied.headers["Location"]).query
+    )
+    assert query["sensitive"] == ["true"]
 
 
 def test_sensitive_login_accepts_fresh_verified_passkey(oidc_services):

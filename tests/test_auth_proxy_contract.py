@@ -8,8 +8,9 @@ def test_caddy_never_fabricates_authentication_method_or_freshness():
     caddyfile = (ROOT / "deploy" / "Caddyfile.finance").read_text()
 
     assert "header_up X-Auth-Method webauthn" not in caddyfile
-    assert "header_up -X-Auth-Method" in caddyfile
-    assert "header_up -X-Auth-Time" in caddyfile
+    assert "request_header -X-Auth-Method" in caddyfile
+    assert "request_header -X-Auth-Time" in caddyfile
+    assert "copy_headers X-Forwarded-User X-Auth-Method X-Auth-Time" in caddyfile
 
 
 def test_caddy_removes_client_spoofable_identity_and_auth_claims():
@@ -19,10 +20,11 @@ def test_caddy_removes_client_spoofable_identity_and_auth_claims():
     assert "request_header -X-Forwarded-User" in caddyfile
     assert "request_header -X-Auth-Method" in caddyfile
     assert "request_header -X-Auth-Time" in caddyfile
-    assert "header_up X-Forwarded-User {http.request.header.Remote-User}" in caddyfile
+    assert "forward_auth finance-oidc-bridge:8081" in caddyfile
+    assert "copy_headers X-Forwarded-User X-Auth-Method X-Auth-Time" in caddyfile
     assert "header_up -Remote-User" in caddyfile
     assert caddyfile.index("request_header -Remote-User") < caddyfile.index(
-        "forward_auth authelia:9091"
+        "forward_auth finance-oidc-bridge:8081"
     )
 
 

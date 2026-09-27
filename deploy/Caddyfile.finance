@@ -1,6 +1,5 @@
-# Finance calculators are public inside the Cloudflare US-only edge policy.
-# Household routes are authorized by Authelia and the backend is reachable only
-# on the private Docker network.
+# Canonical Finance site block. Production includes this behavior in the
+# infrastructure repository's complete Caddyfile; keep the two in sync.
 finance.gordongouger.com {
 	import tls_origin
 	import security_headers
@@ -18,23 +17,47 @@ finance.gordongouger.com {
 		reverse_proxy finance:8080
 	}
 
+	@oidc_browser {
+		path /oauth2/start /oauth2/callback /oauth2/logout /oauth2/session /logged-out
+	}
+	handle @oidc_browser {
+		reverse_proxy finance-oidc-bridge:8081
+	}
+
 	handle {
-		# Never allow the browser to supply identity or authentication claims.
-		# ForwardAuth currently asserts identity only; it does not expose OIDC
-		# amr/auth_time, so the backend intentionally receives no passkey claim.
-		request_header -Remote-User
-		request_header -X-Forwarded-User
-		request_header -X-Auth-Method
-		request_header -X-Auth-Time
-		forward_auth authelia:9091 {
-			uri /api/authz/forward-auth
-			copy_headers Remote-User Remote-Groups Remote-Name Remote-Email
-		}
-		reverse_proxy finance:8080 {
-			header_up X-Forwarded-User {http.request.header.Remote-User}
-			header_up -Remote-User
-			header_up -X-Auth-Method
-			header_up -X-Auth-Time
+		route {
+			request_header -Remote-User
+			request_header -X-Forwarded-User
+			request_header -X-Auth-Method
+			request_header -X-Auth-Time
+			request_header -X-Auth-Require-Fresh
+
+			@fresh {
+				path /api/private/security/fresh-check /api/private/lifecycle/* /api/private/mcp/grants* /api/private/payroll/approval /api/private/payroll/link-token /api/private/payroll/manual /api/private/payroll/ingest /api/private/investments/imports/*
+			}
+			request_header @fresh X-Auth-Require-Fresh true
+			@fresh_connection_post {
+				method POST
+				path /api/private/connections/plaid/*
+			}
+			request_header @fresh_connection_post X-Auth-Require-Fresh true
+			@fresh_connection_delete {
+				method DELETE
+				path /api/private/connections/*
+			}
+			request_header @fresh_connection_delete X-Auth-Require-Fresh true
+
+			forward_auth finance-oidc-bridge:8081 {
+				uri /oauth2/auth
+				header_up X-Forwarded-Method {method}
+				header_up X-Forwarded-Uri {uri}
+				header_up X-Auth-Require-Fresh {http.request.header.X-Auth-Require-Fresh}
+				copy_headers X-Forwarded-User X-Auth-Method X-Auth-Time
+			}
+
+			reverse_proxy finance:8080 {
+				header_up -Remote-User
+			}
 		}
 	}
 }

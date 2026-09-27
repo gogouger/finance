@@ -15,6 +15,8 @@ subrequest after a server-side session has been validated.
   issued-at time, nonce, `azp`, stable subject, numeric `auth_time`, and `amr`.
 - A passkey session requires `hwk` or `swk` plus `user` or `pin`. Password,
   recovery, missing, and unknown method references fail closed.
+- The signed subject/username must match the configured owner allowlist. An
+  empty allowlist makes an enabled bridge unhealthy and unable to authorize.
 - Sensitive authentication sends `max_age=300` and rejects a returned
   `auth_time` older than five minutes. Finance still performs its own freshness
   check.
@@ -63,4 +65,6 @@ process. It reuses the Finance image, publishes no host port, has no data-volume
 mount, and joins only `finance_edge`. When the bridge is deployed, that network
 must contain exactly Caddy, Finance, and the bridge; update the base network
 migration evidence accordingly. Store its environment at
-`/opt/data/finance/oidc-bridge.env`, owned by root with mode `0600`.
+`/opt/data/finance/oidc-bridge.env`, owned by root with mode `0600`. Sensitive
+route classification is repeated inside the bridge so proxy-matcher drift
+cannot bypass the five-minute step-up policy.

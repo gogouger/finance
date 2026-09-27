@@ -102,6 +102,7 @@ async def token(request: Request):
         "aud": "finance",
         "azp": "finance",
         "sub": "alice",
+        "preferred_username": "alice",
         "iat": now,
         "exp": now + 600,
         "nonce": record["nonce"],
@@ -121,6 +122,9 @@ async def token(request: Request):
     elif selected == "bad_azp":
         claims["aud"] = ["finance", "someone-else"]
         claims["azp"] = "someone-else"
+    elif selected == "wrong_owner":
+        claims["sub"] = "mallory"
+        claims["preferred_username"] = "mallory"
 
     return {
         "access_token": "unused",
