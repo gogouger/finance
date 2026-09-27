@@ -8,7 +8,7 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any, Literal
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
@@ -23,6 +23,7 @@ router = APIRouter()
 ACCESS_LIFETIME = timedelta(minutes=10)
 REFRESH_LIFETIME = timedelta(days=30)
 AUTHORIZATION_CODE_LIFETIME = timedelta(minutes=10)
+MCP_PROTOCOL_VERSION = "2025-06-18"
 FINANCE_SCOPES = {
     "finance:summary",
     "finance:metrics",
@@ -56,6 +57,27 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
+def _issuer(request: Request) -> str:
+    scheme = request.headers.get("X-Forwarded-Proto") or request.url.scheme
+    host = request.headers.get("host") or request.url.netloc
+    return f"{scheme}://{host}".rstrip("/")
+
+
+def _resource_uri(request: Request) -> str:
+    return f"{_issuer(request)}/mcp"
+
+
+def _resource_metadata_uri(request: Request) -> str:
+    return f"{_issuer(request)}/.well-known/oauth-protected-resource/mcp"
+
+
+def _oauth_challenge(request: Request, error: str | None = None) -> dict[str, str]:
+    value = f'Bearer resource_metadata="{_resource_metadata_uri(request)}"'
+    if error:
+        value += f', error="{error}"'
+    return {"WWW-Authenticate": value}
+
+
 def _hash(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()
 
@@ -75,6 +97,7 @@ def _public_grant(grant: dict) -> dict:
             "scopes",
             "status",
             "created_at",
+            "last_used_at",
             "revoked_at",
         )
         if key in grant
@@ -103,6 +126,16 @@ class GrantCreate(BaseModel):
     code_challenge: str = Field(min_length=43, max_length=128)
     code_challenge_method: Literal["S256"]
 
+    @field_validator("redirect_uri")
+    @classmethod
+    def secure_redirect_uri(cls, value: str) -> str:
+        parsed = urllib.parse.urlparse(value)
+        if parsed.scheme == "https":
+            return value
+        if parsed.scheme == "http" and parsed.hostname in {"localhost", "127.0.0.1", "::1"}:
+            return value
+        raise ValueError("redirect_uri must use HTTPS or localhost HTTP")
+
     @field_validator("scopes")
     @classmethod
     def finance_scopes_only(cls, value: list[str]) -> list[str]:
@@ -122,7 +155,7 @@ class ToolCall(BaseModel):
 
 @router.get("/.well-known/oauth-authorization-server")
 def oauth_discovery(request: Request) -> dict:
-    issuer = str(request.base_url).rstrip("/")
+    issuer = _issuer(request)
     return {
         "issuer": issuer,
         "authorization_endpoint": f"{issuer}/api/private/mcp/grants",
@@ -131,7 +164,50 @@ def oauth_discovery(request: Request) -> dict:
         "response_types_supported": ["code"],
         "code_challenge_methods_supported": ["S256"],
         "token_endpoint_auth_methods_supported": ["none"],
+        "registration_endpoint": f"{issuer}/mcp/oauth/register",
+        "require_pushed_authorization_requests": False,
+        "authorization_response_iss_parameter_supported": True,
         "scopes_supported": sorted(FINANCE_SCOPES),
+    }
+
+
+@router.get("/.well-known/oauth-protected-resource/mcp")
+def protected_resource_metadata(request: Request) -> dict:
+    issuer = _issuer(request)
+    return {
+        "resource": _resource_uri(request),
+        "authorization_servers": [issuer],
+        "scopes_supported": sorted(FINANCE_SCOPES),
+        "bearer_methods_supported": ["header"],
+    }
+
+
+class DynamicClientRegistration(BaseModel):
+    client_name: str = Field(min_length=3, max_length=120)
+    redirect_uris: list[str] = Field(min_length=1, max_length=10)
+    token_endpoint_auth_method: Literal["none"] = "none"
+
+    @field_validator("redirect_uris")
+    @classmethod
+    def validate_redirect_uris(cls, values: list[str]) -> list[str]:
+        for value in values:
+            GrantCreate.secure_redirect_uri(value)
+        return values
+
+
+@router.post("/mcp/oauth/register", status_code=201)
+def dynamic_client_registration(
+    payload: DynamicClientRegistration, request: Request
+) -> dict:
+    """Register public-client metadata; consent still happens through owner auth."""
+    return {
+        "client_id": f"mcp-{uuid4()}",
+        "client_name": payload.client_name,
+        "redirect_uris": payload.redirect_uris,
+        "token_endpoint_auth_method": "none",
+        "grant_types": ["authorization_code", "refresh_token"],
+        "response_types": ["code"],
+        "scope": " ".join(sorted(FINANCE_SCOPES)),
     }
 
 
@@ -144,6 +220,7 @@ def create_grant(payload: GrantCreate, request: Request) -> dict:
         "id": str(uuid4()),
         "client_id": payload.client_id,
         "client_name": payload.client_name,
+        "resource": _resource_uri(request),
         "redirect_uri": payload.redirect_uri,
         "scopes": payload.scopes,
         "status": "active",
@@ -269,6 +346,7 @@ async def oauth_token(request: Request) -> JSONResponse:
             and hmac.compare_digest(
                 grant["code_challenge"], _pkce_challenge(values.get("code_verifier", ""))
             )
+            and values.get("resource", grant.get("resource")) == grant.get("resource")
         )
     elif grant_type == "refresh_token":
         grant = _find_grant(storage, "refresh_token_hash", values.get("refresh_token", ""))
@@ -277,6 +355,7 @@ async def oauth_token(request: Request) -> JSONResponse:
             and grant["status"] == "active"
             and grant["client_id"] == values.get("client_id")
             and datetime.fromisoformat(grant["refresh_token_expires_at"]) > _now()
+            and values.get("resource", grant.get("resource")) == grant.get("resource")
         )
     else:
         raise HTTPException(status_code=400, detail="unsupported_grant_type")
@@ -288,10 +367,14 @@ async def oauth_token(request: Request) -> JSONResponse:
     )
 
 
-def _bearer_grant(request: Request) -> dict:
+def _bearer_grant(request: Request, *, require_mcp_resource: bool = False) -> dict:
     authorization = request.headers.get("Authorization", "")
     if not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="OAuth bearer token required")
+        raise HTTPException(
+            status_code=401,
+            detail="OAuth bearer token required",
+            headers=_oauth_challenge(request),
+        )
     grant = _find_grant(
         request.app.state.storage, "access_token_hash", authorization[7:]
     )
@@ -299,8 +382,18 @@ def _bearer_grant(request: Request) -> dict:
         grant is None
         or grant["status"] != "active"
         or datetime.fromisoformat(grant["access_token_expires_at"]) <= _now()
+        or (
+            require_mcp_resource
+            and grant.get("resource") not in {None, _resource_uri(request)}
+        )
     ):
-        raise HTTPException(status_code=401, detail="invalid or expired access token")
+        raise HTTPException(
+            status_code=401,
+            detail="invalid or expired access token",
+            headers=_oauth_challenge(request, "invalid_token"),
+        )
+    grant["last_used_at"] = _now().isoformat()
+    request.app.state.storage.save_mcp_grant(grant["owner"], grant)
     return grant
 
 
@@ -452,10 +545,9 @@ def _execute_tool(storage, owner: str, payload: ToolCall) -> tuple[dict, str, di
     raise HTTPException(status_code=404, detail="unknown Finance tool")
 
 
-@router.post("/mcp/tools/call")
-@router.post("/api/internal/mcp/finance/tools/call")
-def call_finance_tool(payload: ToolCall, request: Request) -> dict:
-    grant = _bearer_grant(request)
+def _call_finance_tool_for_grant(
+    payload: ToolCall, request: Request, grant: dict
+) -> dict:
     required_scope = TOOL_SCOPES.get(payload.tool)
     if required_scope is None:
         raise HTTPException(status_code=404, detail="unknown Finance tool")
@@ -481,3 +573,164 @@ def call_finance_tool(payload: ToolCall, request: Request) -> dict:
         raise
     storage.append_audit(grant["owner"], {**audit_base, "outcome": "success", "sensitivity": sensitivity, "date_range": date_range})
     return {"tool": payload.tool, "sensitivity": sensitivity, "date_range": date_range, "data": _redact(data)}
+
+
+@router.post("/mcp/tools/call")
+@router.post("/api/internal/mcp/finance/tools/call")
+def call_finance_tool(payload: ToolCall, request: Request) -> dict:
+    return _call_finance_tool_for_grant(payload, request, _bearer_grant(request))
+
+
+MCP_TOOLS = {
+    "finance.summary": {
+        "description": "Read aggregate household balances, spending, and freshness without account numbers or individual transactions.",
+        "inputSchema": {"type": "object", "additionalProperties": False},
+    },
+    "finance.cash_flow_trend": {
+        "description": "Read aggregate monthly depository movement, with transfers and card activity kept distinct from spending.",
+        "inputSchema": {"type": "object", "additionalProperties": False},
+    },
+    "finance.metric_definitions": {
+        "description": "Read the definitions and boundaries for aggregate Finance metrics.",
+        "inputSchema": {"type": "object", "additionalProperties": False},
+    },
+    "finance.spending_breakdown": {
+        "description": "Read aggregate spending by category without merchant or transaction-level data.",
+        "inputSchema": {"type": "object", "additionalProperties": False},
+    },
+    "finance.investments.summary": {
+        "description": "Read aggregate household and custodial investment totals without tax lots or account numbers.",
+        "inputSchema": {"type": "object", "additionalProperties": False},
+    },
+    "finance.scenarios.list": {
+        "description": "List saved financial scenarios with direct identifiers redacted.",
+        "inputSchema": {"type": "object", "additionalProperties": False},
+    },
+    "finance.scenario.calculate": {
+        "description": "Run an allowlisted Finance calculator with supplied assumptions; it never saves or changes data.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"calculator": {"type": "string"}, "inputs": {"type": "object"}},
+            "required": ["calculator", "inputs"],
+            "additionalProperties": False,
+        },
+    },
+    "finance.transactions.list": {
+        "description": "Read minimally scoped transaction detail for an explicit period of 31 days or less.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"start": {"type": "string", "format": "date"}, "end": {"type": "string", "format": "date"}},
+            "required": ["start", "end"],
+            "additionalProperties": False,
+        },
+    },
+}
+
+
+def _jsonrpc_error(request_id: Any, code: int, message: str, data: Any = None) -> dict:
+    error: dict[str, Any] = {"code": code, "message": message}
+    if data is not None:
+        error["data"] = data
+    return {"jsonrpc": "2.0", "id": request_id, "error": error}
+
+
+def _mcp_response(request_id: Any, result: dict, *, headers: dict[str, str] | None = None) -> JSONResponse:
+    return JSONResponse(
+        {"jsonrpc": "2.0", "id": request_id, "result": result},
+        headers=headers or {},
+    )
+
+
+def _mcp_tool_list(grant: dict) -> list[dict]:
+    return [
+        {
+            "name": name,
+            **definition,
+            "annotations": {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False},
+        }
+        for name, definition in MCP_TOOLS.items()
+        if TOOL_SCOPES[name] in grant["scopes"]
+    ]
+
+
+def _validate_mcp_origin(request: Request) -> None:
+    origin = request.headers.get("origin")
+    if origin and origin.rstrip("/") != _issuer(request):
+        raise HTTPException(status_code=403, detail="MCP Origin is not allowed")
+
+
+@router.get("/mcp")
+def mcp_stream_get(request: Request) -> Response:
+    _validate_mcp_origin(request)
+    # This server is intentionally request/response-only; it does not offer a
+    # server-initiated SSE stream.
+    return Response(status_code=405, headers={"Allow": "POST"})
+
+
+@router.post("/mcp")
+async def mcp_streamable_http(request: Request) -> Response:
+    _validate_mcp_origin(request)
+    accept = request.headers.get("accept", "")
+    if "application/json" not in accept or "text/event-stream" not in accept:
+        return JSONResponse(
+            _jsonrpc_error(None, -32600, "Accept must include application/json and text/event-stream"),
+            status_code=406,
+        )
+    try:
+        message = await request.json()
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return JSONResponse(_jsonrpc_error(None, -32700, "Parse error"), status_code=400)
+    if not isinstance(message, dict) or message.get("jsonrpc") != "2.0" or not isinstance(message.get("method"), str):
+        return JSONResponse(_jsonrpc_error(message.get("id") if isinstance(message, dict) else None, -32600, "Invalid Request"), status_code=400)
+    method = message["method"]
+    request_id = message.get("id")
+    grant = _bearer_grant(request, require_mcp_resource=True)
+    if request_id is None:
+        if method == "notifications/initialized":
+            return Response(status_code=202)
+        return Response(status_code=202)
+    if method == "initialize":
+        params = message.get("params") or {}
+        version = params.get("protocolVersion")
+        if version not in {MCP_PROTOCOL_VERSION, "2025-03-26"}:
+            return JSONResponse(_jsonrpc_error(request_id, -32602, "Unsupported protocol version"), status_code=400)
+        return _mcp_response(
+            request_id,
+            {
+                "protocolVersion": MCP_PROTOCOL_VERSION,
+                "capabilities": {"tools": {"listChanged": False}},
+                "serverInfo": {"name": "Gordon Gouger Finance", "version": "1.0"},
+                "instructions": "Read-only personal Finance tools. Aggregate tools avoid direct identifiers; transaction detail requires an explicit bounded date range.",
+            },
+        )
+    if method == "tools/list":
+        return _mcp_response(request_id, {"tools": _mcp_tool_list(grant)})
+    if method == "tools/call":
+        params = message.get("params") or {}
+        try:
+            payload = ToolCall(tool=params.get("name", ""), arguments=params.get("arguments") or {})
+        except Exception as error:
+            return _mcp_response(
+                request_id,
+                {"content": [{"type": "text", "text": str(error)}], "isError": True},
+            )
+        try:
+            tool_result = _call_finance_tool_for_grant(payload, request, grant)
+        except HTTPException as error:
+            if error.status_code in {401, 403}:
+                raise
+            return _mcp_response(
+                request_id,
+                {"content": [{"type": "text", "text": str(error.detail)}], "isError": True},
+            )
+        return _mcp_response(
+            request_id,
+            {
+                "content": [
+                    {"type": "text", "text": json.dumps(tool_result, sort_keys=True)}
+                ],
+                "structuredContent": tool_result,
+                "isError": False,
+            },
+        )
+    return JSONResponse(_jsonrpc_error(request_id, -32601, "Method not found"))

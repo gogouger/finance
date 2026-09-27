@@ -284,3 +284,69 @@ def test_detailed_transactions_require_scope_bounded_range_and_are_audited(mcp_s
     assert detail_audit["date_range"] == {"start": "2026-09-01", "end": "2026-09-30"}
     assert detail_audit["sensitivity"] == "transaction_detail"
     assert "conversation" not in detail_audit
+
+
+def test_streamable_http_mcp_publishes_metadata_and_read_only_tools(mcp_service):
+    metadata = _json(
+        urllib.request.Request(
+            f"{mcp_service}/.well-known/oauth-protected-resource/mcp"
+        )
+    )
+    assert metadata["resource"] == f"{mcp_service}/mcp"
+    assert metadata["authorization_servers"] == [mcp_service]
+
+    with pytest.raises(urllib.error.HTTPError) as unauthenticated:
+        urllib.request.urlopen(
+            _request(
+                f"{mcp_service}/mcp",
+                {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18"}},
+                method="POST",
+                headers={"Accept": "application/json, text/event-stream"},
+            )
+        )
+    assert unauthenticated.value.code == 401
+    assert "oauth-protected-resource/mcp" in unauthenticated.value.headers["WWW-Authenticate"]
+
+    grant = _grant(mcp_service, ["finance:summary", "finance:metrics"])
+    tokens = _exchange(mcp_service, grant)
+    headers = {
+        "Authorization": f"Bearer {tokens['access_token']}",
+        "Accept": "application/json, text/event-stream",
+    }
+    initialized = _json(
+        _request(
+            f"{mcp_service}/mcp",
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18", "clientInfo": {"name": "Codex", "version": "test"}, "capabilities": {}}},
+            method="POST",
+            headers=headers,
+        )
+    )
+    assert initialized["result"]["protocolVersion"] == "2025-06-18"
+    assert initialized["result"]["serverInfo"]["name"] == "Gordon Gouger Finance"
+
+    listed = _json(
+        _request(
+            f"{mcp_service}/mcp",
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+            method="POST",
+            headers={**headers, "MCP-Protocol-Version": "2025-06-18"},
+        )
+    )
+    tools = listed["result"]["tools"]
+    assert {item["name"] for item in tools} == {
+        "finance.summary",
+        "finance.cash_flow_trend",
+        "finance.metric_definitions",
+    }
+    assert all(item["annotations"]["readOnlyHint"] is True for item in tools)
+
+    called = _json(
+        _request(
+            f"{mcp_service}/mcp",
+            {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "finance.summary", "arguments": {}}},
+            method="POST",
+            headers={**headers, "MCP-Protocol-Version": "2025-06-18"},
+        )
+    )
+    assert called["result"]["isError"] is False
+    assert called["result"]["structuredContent"]["data"]["currency"] == "USD"
