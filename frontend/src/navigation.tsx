@@ -35,7 +35,6 @@ export function FinanceNav() {
   const authenticated = session?.authenticated === true;
 
   return <>
-    <a className="skip-link" href="#main-content">Skip to main content</a>
     <nav aria-label="Primary navigation">
       <a className="brand" href="/" aria-label="Finance home"><small>GG /</small> Finance</a>
       <div className="nav-links">
