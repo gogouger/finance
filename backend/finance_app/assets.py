@@ -1,6 +1,7 @@
 from copy import deepcopy
 from datetime import UTC, datetime
 from decimal import Decimal, ROUND_HALF_UP
+from statistics import median
 from typing import Literal
 from uuid import uuid4
 
@@ -41,6 +42,72 @@ def _observation_with_freshness(observation: dict) -> dict:
 
 def effective_asset_valuation(asset: dict) -> dict:
     """Return the latest usable automated estimate, else the registered value."""
+    if asset.get("kind") == "home":
+        latest_by_source: dict[str, dict] = {}
+        for item in asset.get("valuation_observations", []):
+            if (
+                item.get("estimate_type") == "market_value"
+                and isinstance(item.get("amount"), (int, float))
+                and item["amount"] > 0
+            ):
+                source_id = item.get("source", {}).get("id", "unknown")
+                if item.get("observed_at", "") >= latest_by_source.get(
+                    source_id, {}
+                ).get("observed_at", ""):
+                    latest_by_source[source_id] = item
+        registered = asset["valuation"]
+        candidates = [
+            {
+                "amount": registered["amount"],
+                "source_id": "registered-property-value",
+                "source_label": registered["source_label"],
+                "valued_at": registered["valued_at"],
+            },
+            *[
+                {
+                    "amount": item["amount"],
+                    "source_id": item.get("source", {}).get("id", "unknown"),
+                    "source_label": item.get("source", {}).get(
+                        "label", "Market estimate"
+                    ),
+                    "valued_at": item.get("observed_at")
+                    or item.get("effective_at"),
+                }
+                for item in latest_by_source.values()
+            ],
+        ]
+        if len(candidates) >= 3:
+            center = float(median(item["amount"] for item in candidates))
+            absolute_deviations = [
+                abs(float(item["amount"]) - center) for item in candidates
+            ]
+            mad = float(median(absolute_deviations))
+            threshold = max(center * 0.12, mad * 3)
+            accepted = [
+                item
+                for item in candidates
+                if abs(float(item["amount"]) - center) <= threshold
+            ]
+            excluded = [item for item in candidates if item not in accepted]
+            if len(accepted) >= 3:
+                amount = _money(median(item["amount"] for item in accepted))
+                return {
+                    "amount": amount,
+                    "valued_at": max(item["valued_at"] for item in accepted),
+                    "source_label": "Multi-source market consensus",
+                    "estimate_type": "market_consensus",
+                    "estimate_range": {
+                        "low": _money(min(item["amount"] for item in accepted)),
+                        "high": _money(max(item["amount"] for item in accepted)),
+                    },
+                    "confidence": {
+                        "level": "medium",
+                        "basis": "median of independent public estimates and the registered county value after robust outlier screening",
+                    },
+                    "components": accepted,
+                    "excluded_outliers": excluded,
+                    "automated": True,
+                }
     estimates = asset.get("valuation_automation", {}).get("latest_estimates", [])
     market_estimates = [
         item

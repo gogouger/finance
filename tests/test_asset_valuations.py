@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from backend.finance_app.assets import effective_asset_valuation
 from backend.finance_app.valuation_provider import (
     RentCastQuotaTracker,
     RentCastValuationProvider,
@@ -174,6 +175,40 @@ def test_vehicle_model_refreshes_a_sourced_anchor_without_network_or_billing():
     assert estimate["assumptions"]["annual_depreciation_percent"] == 7
     assert provider.terms()["network_requests"] == 0
     assert "cannot create provider charges" in provider.terms()["billing_guard"]
+
+
+def test_home_consensus_excludes_a_materially_low_avm_outlier():
+    asset = {
+        "kind": "home",
+        "valuation": {
+            "amount": 735310,
+            "valued_at": "2026-09-26T00:00:00Z",
+            "source_label": "County actual value",
+        },
+        "valuation_observations": [
+            {
+                "amount": amount,
+                "estimate_type": "market_value",
+                "observed_at": "2026-09-27T00:00:00Z",
+                "source": {"id": source_id, "label": label},
+            }
+            for source_id, label, amount in (
+                ("rentcast", "RentCast", 574000),
+                ("zillow", "Zillow", 713300),
+                ("realtor", "Realtor.com", 723000),
+                ("redfin", "Redfin", 759473),
+                ("trulia", "Trulia", 704600),
+            )
+        ],
+    }
+
+    effective = effective_asset_valuation(asset)
+
+    assert effective["amount"] == 723000
+    assert effective["estimate_range"] == {"low": 704600, "high": 759473}
+    assert [item["source_label"] for item in effective["excluded_outliers"]] == [
+        "RentCast"
+    ]
 
 
 def test_refresh_records_conflicting_sourced_observations_without_overwriting_history(

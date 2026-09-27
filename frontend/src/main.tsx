@@ -242,6 +242,9 @@ type HomeAsset = {
     estimate_type?: string;
     automated: boolean;
     confidence?: { level?: string; basis?: string };
+    estimate_range?: { low: number; high: number };
+    components?: Array<{ amount: number; source_label: string; valued_at: string }>;
+    excluded_outliers?: Array<{ amount: number; source_label: string; valued_at: string }>;
   };
   ownership: { debt_balance: number; net_equity_after_sale: number };
   cost_summary: {
@@ -973,8 +976,8 @@ function InvestmentOverview({ data }: { data: InvestmentResult }) {
 
 function HomeOverview({ home }: { home: HomeAsset }) {
   const [growthRate, setGrowthRate] = useState(4);
-  const estimate = home.valuation_automation?.latest_estimates?.[0];
-  const currentValue = estimate?.amount || home.valuation.amount;
+  const effective = home.effective_valuation;
+  const currentValue = effective?.amount || home.valuation.amount;
   const costs = home.cost_summary.annual_ownership_costs || {};
   const years = [0, 5, 10, 20];
   const projections = years.map((year) => ({ year, value: currentValue * Math.pow(1 + growthRate / 100, year) }));
@@ -986,10 +989,22 @@ function HomeOverview({ home }: { home: HomeAsset }) {
         <strong>{money.format(currentValue)}</strong>
       </div>
       <div className="home-value-grid">
-        <article><span>Current market estimate</span><strong>{money.format(currentValue)}</strong><small>{estimate?.source?.label || home.valuation.source_label} · {estimate ? new Date(estimate.observed_at).toLocaleDateString() : new Date(home.valuation.valued_at).toLocaleDateString()}</small>{estimate?.estimate_range && <div className="estimate-range"><i /><p>{money.format(estimate.estimate_range.low)} <span>estimated range</span> {money.format(estimate.estimate_range.high)}</p></div>}</article>
+        <article><span>Current market consensus</span><strong>{money.format(currentValue)}</strong><small>{effective?.source_label || home.valuation.source_label} · {effective ? new Date(effective.valued_at).toLocaleDateString() : new Date(home.valuation.valued_at).toLocaleDateString()}</small>{effective?.estimate_range && <div className="estimate-range"><i /><p>{money.format(effective.estimate_range.low)} <span>accepted estimates</span> {money.format(effective.estimate_range.high)}</p></div>}</article>
         <article><span>County / registered value</span><strong>{money.format(home.valuation.amount)}</strong><small>{home.valuation.source_label}</small></article>
         <article><span>Known annual carrying cost</span><strong>{money.format(home.cost_summary.annual_ownership_total || 0)}</strong><small>{Object.keys(costs).map((key) => key.replaceAll("_", " ")).join(" + ") || "No costs recorded"}. Maintenance, insurance, utilities, and improvements remain excluded until linked.</small></article>
       </div>
+      {effective?.excluded_outliers?.map((outlier) => (
+        <div className="valuation-warning" key={`${outlier.source_label}-${outlier.valued_at}`}>
+          <strong>{outlier.source_label} is being treated as an outlier</strong>
+          <p>{money.format(outlier.amount)} is materially outside the cluster of independent estimates, so it remains visible but does not drive net worth or the projection.</p>
+        </div>
+      ))}
+      {effective?.components && (
+        <details className="valuation-sources">
+          <summary>See the estimates behind the consensus</summary>
+          <div>{effective.components.map((component) => <p key={`${component.source_label}-${component.valued_at}`}><span>{component.source_label}</span><strong>{money.format(component.amount)}</strong></p>)}</div>
+        </details>
+      )}
       <div className="growth-control">
         <label htmlFor="home-growth">Annual appreciation scenario <strong>{growthRate.toFixed(1)}%</strong></label>
         <input id="home-growth" type="range" min="0" max="8" step="0.25" value={growthRate} onChange={(event) => setGrowthRate(Number(event.target.value))} />
