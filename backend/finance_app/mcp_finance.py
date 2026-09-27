@@ -238,9 +238,10 @@ class DynamicClientRegistration(BaseModel):
     @field_validator("redirect_uris")
     @classmethod
     def validate_redirect_uris(cls, values: list[str]) -> list[str]:
-        for value in values:
+        unique = sorted(set(values))
+        for value in unique:
             GrantCreate.secure_redirect_uri(value)
-        return values
+        return unique
 
 
 def _authorization_payload(values: dict[str, str], request: Request) -> tuple[GrantCreate, str]:
@@ -249,13 +250,21 @@ def _authorization_payload(values: dict[str, str], request: Request) -> tuple[Gr
     resource = values.get("resource")
     if resource and resource.rstrip("/") != _resource_uri(request):
         raise HTTPException(status_code=422, detail="resource must match this MCP endpoint")
+    client_id = values.get("client_id", "")
+    client = request.app.state.storage.get_mcp_client(client_id)
+    if client is None:
+        raise HTTPException(status_code=422, detail="MCP client is not registered")
+    redirect_uri = values.get("redirect_uri", "")
+    if redirect_uri not in client.get("redirect_uris", []):
+        raise HTTPException(status_code=422, detail="redirect_uri is not registered for this MCP client")
     try:
         payload = GrantCreate(
-            client_id=values.get("client_id", ""),
-            # Dynamic clients may provide a display name in the authorization
-            # request; the consent screen never hides the stable client ID.
-            client_name=values.get("client_name") or values.get("client_id", ""),
-            redirect_uri=values.get("redirect_uri", ""),
+            client_id=client_id,
+            # Display the registration record, never a name supplied by the
+            # authorization request. This prevents a client from disguising
+            # itself on the owner consent screen.
+            client_name=client["client_name"],
+            redirect_uri=redirect_uri,
             scopes=values.get("scope", "").split(),
             code_challenge=values.get("code_challenge", ""),
             code_challenge_method=values.get("code_challenge_method", ""),
@@ -312,9 +321,19 @@ async def authorization_approve(request: Request) -> RedirectResponse:
 def dynamic_client_registration(
     payload: DynamicClientRegistration, request: Request
 ) -> dict:
-    """Register public-client metadata; consent still happens through owner auth."""
+    """Register public-client metadata bound at the consent endpoint."""
+    now = _now()
+    client_id = f"mcp-{uuid4()}"
+    request.app.state.storage.save_mcp_client(
+        {
+            "id": client_id,
+            "client_name": payload.client_name,
+            "redirect_uris": payload.redirect_uris,
+            "created_at": now.isoformat(),
+        }
+    )
     return {
-        "client_id": f"mcp-{uuid4()}",
+        "client_id": client_id,
         "client_name": payload.client_name,
         "redirect_uris": payload.redirect_uris,
         "token_endpoint_auth_method": "none",

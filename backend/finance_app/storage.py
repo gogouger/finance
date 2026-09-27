@@ -220,6 +220,19 @@ class EncryptedStorage:
                 )
                 """
             )
+            # Dynamic-client metadata is not household data, but storing it
+            # encrypted lets the authorization endpoint bind a consent screen
+            # to the exact redirect URI and name the client registered.  A
+            # client id alone must never be enough to choose a redirect URL.
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS mcp_clients (
+                    id TEXT PRIMARY KEY,
+                    encrypted_record BLOB NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
 
         os.chmod(self._database_path, 0o600)
         self._index_key = secret
@@ -818,6 +831,21 @@ class EncryptedStorage:
                     stored["created_at"],
                 ),
             )
+
+    def save_mcp_client(self, record: dict[str, Any]) -> None:
+        with sqlite3.connect(self._database_path) as connection:
+            connection.execute(
+                """INSERT INTO mcp_clients VALUES (?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET encrypted_record=excluded.encrypted_record""",
+                (record["id"], self._encrypt(record), record["created_at"]),
+            )
+
+    def get_mcp_client(self, client_id: str) -> dict[str, Any] | None:
+        with sqlite3.connect(self._database_path) as connection:
+            row = connection.execute(
+                "SELECT encrypted_record FROM mcp_clients WHERE id = ?", (client_id,)
+            ).fetchone()
+        return None if row is None else self._decrypt(row[0])
 
     def get_mcp_grant(self, owner: str, grant_id: str) -> dict[str, Any] | None:
         with sqlite3.connect(self._database_path) as connection:

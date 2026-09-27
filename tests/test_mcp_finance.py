@@ -132,6 +132,19 @@ def _grant(base_url: str, scopes: list[str]):
     )
 
 
+def _register_client(base_url: str, *, name: str = "Claude Desktop test") -> dict:
+    return _json(
+        _request(
+            f"{base_url}/mcp/oauth/register",
+            {
+                "client_name": name,
+                "redirect_uris": ["http://127.0.0.1:8765/oauth/callback"],
+            },
+            method="POST",
+        )
+    )
+
+
 def _exchange(base_url: str, grant: dict):
     return _json(
         _token_request(
@@ -218,11 +231,12 @@ def test_oauth_discovery_short_lived_tokens_rotation_and_revocation(mcp_service)
 
 
 def test_passkey_fresh_authorization_screen_displays_scoped_consent(mcp_service):
+    registered = _register_client(mcp_service)
     query = urllib.parse.urlencode(
         {
             "response_type": "code",
-            "client_id": "claude-desktop-test",
-            "client_name": "Claude Desktop test",
+            "client_id": registered["client_id"],
+            "client_name": "an attempted disguise",
             "redirect_uri": "http://127.0.0.1:8765/oauth/callback",
             "scope": "athletics:training:summary library:reading:metrics",
             "code_challenge": CHALLENGE,
@@ -239,6 +253,7 @@ def test_passkey_fresh_authorization_screen_displays_scoped_consent(mcp_service)
         page = response.read().decode()
     assert "Approve read-only access?" in page
     assert "Claude Desktop test" in page
+    assert "an attempted disguise" not in page
     assert "athletics:training:summary" in page
     assert "library:reading:metrics" in page
     assert "Access tokens expire after 10 minutes" in page
@@ -246,8 +261,8 @@ def test_passkey_fresh_authorization_screen_displays_scoped_consent(mcp_service)
     form = urllib.parse.urlencode(
         {
             "response_type": "code",
-            "client_id": "claude-desktop-test",
-            "client_name": "Claude Desktop test",
+            "client_id": registered["client_id"],
+            "client_name": "an attempted disguise",
             "redirect_uri": "http://127.0.0.1:8765/oauth/callback",
             "scope": "athletics:training:summary library:reading:metrics",
             "code_challenge": CHALLENGE,
@@ -278,13 +293,35 @@ def test_passkey_fresh_authorization_screen_displays_scoped_consent(mcp_service)
             {
                 "grant_type": "authorization_code",
                 "code": values["code"],
-                "client_id": "claude-desktop-test",
+                "client_id": registered["client_id"],
                 "redirect_uri": "http://127.0.0.1:8765/oauth/callback",
                 "code_verifier": VERIFIER,
             },
         )
     )
     assert tokens["scope"] == "athletics:training:summary library:reading:metrics"
+
+
+def test_dynamic_registration_binds_consent_to_registered_redirect_uri(mcp_service):
+    registered = _register_client(mcp_service, name="Codex on office desktop")
+    query = urllib.parse.urlencode(
+        {
+            "response_type": "code",
+            "client_id": registered["client_id"],
+            "redirect_uri": "https://attacker.invalid/callback",
+            "scope": "finance:summary",
+            "code_challenge": CHALLENGE,
+            "code_challenge_method": "S256",
+            "resource": f"{mcp_service}/mcp",
+        }
+    )
+    with pytest.raises(urllib.error.HTTPError) as rejected:
+        urllib.request.urlopen(
+            urllib.request.Request(
+                f"{mcp_service}/mcp/oauth/authorize?{query}", headers=_fresh_owner()
+            )
+        )
+    assert rejected.value.code == 422
 
 
 def test_default_tools_are_aggregate_redacted_and_unknown_scopes_are_rejected(mcp_service):
