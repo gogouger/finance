@@ -28,6 +28,25 @@ use the same OAuth DCR + S256 PKCE flow. A portless `127.0.0.1` loopback
 callback may use the client’s temporary local port during approval; every
 other redirect URI must match its registration exactly.
 
+For Claude Code, add the same remote HTTP endpoint at user scope, then use
+Claude Code's `/mcp` connection screen to authenticate in the browser. The
+browser approval uses the same freshly verified passkey flow as Codex and
+creates a separately named grant; it does **not** reuse a Codex token or a
+shared API key.
+
+```sh
+claude mcp add --scope user --transport http personal-gateway \
+  https://finance.gordongouger.com/mcp
+```
+
+After completing the approval, `claude mcp list` shows the connection. Use
+Claude Code's `/mcp` menu to clear its local authentication if that device is
+lost, then revoke the matching named grant from Finance → Connections for
+immediate server-side invalidation. Claude Desktop users should add the same
+**Streamable HTTP** endpoint and choose its OAuth authentication action; if a
+client does not support OAuth DCR, do not work around it with a permanent
+token—use a compatible client instead.
+
 ## OAuth client grants
 
 OAuth metadata is available at `/.well-known/oauth-authorization-server`.
