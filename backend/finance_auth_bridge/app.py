@@ -595,4 +595,9 @@ def logout(request: Request):
 
 @app.get("/logged-out")
 def logged_out():
-    return JSONResponse({"status": "logged_out"})
+    # This is the RP-initiated logout return target. Keep it public and send the
+    # browser back to Finance's real signed-out experience rather than leaving
+    # the user on an implementation-status JSON document.
+    response = RedirectResponse("/", status_code=303)
+    response.headers["Cache-Control"] = "no-store"
+    return response

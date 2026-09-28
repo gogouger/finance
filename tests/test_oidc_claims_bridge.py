@@ -336,6 +336,16 @@ def test_logout_revokes_server_side_session(oidc_services):
     assert denied.status == 302
 
 
+def test_logged_out_return_target_redirects_to_the_public_finance_page(oidc_services):
+    _, bridge = oidc_services
+
+    response = _response(urllib.request.Request(f"{bridge}/logged-out"))
+
+    assert response.status == 303
+    assert response.headers["Location"] == "/"
+    assert response.headers["Cache-Control"] == "no-store"
+
+
 def test_successful_login_rotates_and_revokes_an_existing_session(oidc_services):
     issuer, bridge = oidc_services
     _, first = _login(issuer, bridge)
