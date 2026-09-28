@@ -33,6 +33,35 @@ def _record_key(record: dict) -> str:
     return f"{record.get('connection_id', 'legacy')}:{record['account_id']}"
 
 
+def _taxable_brokerage_cash_equivalents(
+    holdings: list[dict], securities_by_id: dict[str, dict], accounts_by_id: dict[str, dict]
+) -> float:
+    """Return explicitly reported cash equivalents in taxable brokerage accounts.
+
+    This is a liquidity view into investments, never an additional net-worth
+    component. It captures positions such as a brokerage settlement money-market
+    fund only when the provider explicitly identifies the security as cash-like.
+    """
+    total = 0.0
+    retirement_markers = ("401", "403", "ira", "roth", "retirement", "pension", "hsa")
+    cash_types = {"cash", "cash equivalent", "money market", "money market fund"}
+    for holding in holdings:
+        account = accounts_by_id.get(holding.get("account_id"))
+        if not account or account.get("type") != "investment" or is_custodial_account(account):
+            continue
+        account_text = " ".join(
+            str(account.get(field) or "")
+            for field in ("name", "official_name", "subtype")
+        ).casefold()
+        if any(marker in account_text for marker in retirement_markers):
+            continue
+        security = securities_by_id.get(holding.get("security_id"), {})
+        security_type = str(security.get("type") or "").casefold().strip()
+        if security.get("is_cash_equivalent") is True or security_type in cash_types:
+            total += float(holding.get("institution_value") or 0)
+    return _money(total)
+
+
 def _latest_balances(records: list[dict]) -> tuple[dict[str, dict], dict[str, list[dict]]]:
     history: dict[str, list[dict]] = {}
     for record in records:
@@ -377,8 +406,14 @@ def financial_dashboard(request: Request) -> dict:
     accounts = _active(storage, owner, "account")
     balances, balance_history = _latest_balances(_active(storage, owner, "balance"))
     account_by_key = {_record_key(item): item for item in accounts}
+    accounts_by_id = {item.get("account_id"): item for item in accounts if item.get("account_id")}
     assets = _active(storage, owner, "household_asset")
     holdings = _active(storage, owner, "holding")
+    securities_by_id = {
+        item.get("security_id"): item
+        for item in _active(storage, owner, "security")
+        if item.get("security_id")
+    }
     transactions = storage.list_financial_records(owner, "transaction")
     classifications = effective_classifications(storage, owner)
     credit_account_ids = {
@@ -434,12 +469,14 @@ def financial_dashboard(request: Request) -> dict:
     cash = sum(float(balance.get("current") or 0) for _, balance in cash_rows)
     current_card_balance = sum(max(0, float(balance.get("current") or 0)) for _, balance in credit_rows)
     investment_value = sum(float(balance.get("current") or 0) for _, balance in investment_rows)
+    taxable_brokerage_cash = _taxable_brokerage_cash_equivalents(
+        holdings, securities_by_id, accounts_by_id
+    )
     custodial_investment_value = sum(
         float(balance.get("current") or 0)
         for _, balance in custodial_investment_rows
     )
     if not all_investment_rows and holdings:
-        accounts_by_id = {item["account_id"]: item for item in accounts}
         investment_value = sum(
             float(item.get("institution_value") or 0)
             for item in holdings
@@ -497,6 +534,7 @@ def financial_dashboard(request: Request) -> dict:
     metrics = [
         _metric("net_worth", "Long-term net worth", net_worth, "Cash, household investments, and registered household assets minus registered asset debt. The current card bill is shown separately rather than treated as debt.", inclusions=["latest depository balances", "latest household investment balances", "registered home and vehicle values", "registered asset debt"], exclusions=["current credit-card amount due", "children's custodial accounts (UTMA/UGMA)", "selling costs", "unregistered assets", "unavailable loan liabilities"], timestamps=[*balance_times, *asset_times], gaps=liability_gap, confidence="medium", rationale="This long-term view keeps a monthly card-clearing amount separate from structural, asset-backed debt.", covered=len(balances) + len(assets), total=len(accounts) + len(assets), sources=balance_sources),
         _metric("cash", "Cash", cash, "Latest current balances for connected depository accounts.", inclusions=["checking", "savings", "other depository accounts"], exclusions=["credit available", "investment cash inside brokerage accounts"], timestamps=[balance.get("observed_at", "") for _, balance in cash_rows], gaps=[] if cash_rows else ["No connected depository balances are available."], confidence="high" if cash_rows else "low", rationale="Computed from latest USD provider balance observations.", covered=len(cash_rows), total=len([item for item in accounts if item.get("type") == "depository"]), sources=transaction_sources),
+        _metric("taxable_brokerage_cash", "Brokerage cash equivalents", taxable_brokerage_cash, "Reported cash or money-market positions inside taxable household brokerage accounts. This is already included in household investment value and net worth.", inclusions=["reported cash-equivalent positions in taxable household brokerage accounts"], exclusions=["bank deposits", "retirement-account cash", "children's custodial accounts", "an additional net-worth amount"], timestamps=[item.get("observed_at", "") for item in holdings], gaps=[] if taxable_brokerage_cash else ["No reported taxable brokerage cash-equivalent position is available."], confidence="high" if taxable_brokerage_cash else "low", rationale="Uses a provider's explicit cash-equivalent security classification; it does not infer cash from a fund name.", covered=sum(1 for item in holdings if str(securities_by_id.get(item.get("security_id"), {}).get("type") or "").casefold() in {"cash", "cash equivalent", "money market", "money market fund"}), total=max(len(investment_rows), 1), sources=transaction_sources),
         _metric("debt", "Registered asset debt", asset_debt, "Debt explicitly registered against household assets.", inclusions=["registered mortgage and vehicle debt"], exclusions=["current credit-card amount due", "unavailable student, personal, and other provider loan liabilities"], timestamps=asset_times, gaps=liability_gap, confidence="medium", rationale="This is structural debt attached to registered assets; monthly card amounts are separate cash-flow information.", covered=len([item for item in assets if item["ownership"]["debt_balance"] > 0]), total=max(1, len(assets)), sources=[item["valuation"]["source_label"] for item in assets]),
         _metric("income", "Income · trailing 12 months", accounting_metrics["income"], "Posted transaction inflows classified as income during the trailing 12 calendar months.", inclusions=["posted income transactions in the reporting period"], exclusions=["older history", "transfers", "refunds", "pending income", "unconnected payroll history"], timestamps=transaction_times, gaps=[], confidence="medium", rationale="Provider transaction categories are used until the owner reviews classifications.", covered=len(transaction_sources), total=len(transaction_sources), sources=transaction_sources),
         _metric("raw_cash_flow", "Observed bank movement · trailing 12 months", accounting_metrics["cash_flow"]["net"], "Credits minus debits observed on connected bank accounts; this is not household profit or loss.", inclusions=["posted depository credits", "posted depository debits", "bank-side investment transfers and card payments"], exclusions=["investment returns", "changes in brokerage value", "credit-card purchases", "older history", "pending transactions"], timestamps=transaction_times, gaps=[] if cash_rows else ["No connected depository account is available, so bank movement is not measurable yet."], confidence="high" if cash_rows else "low", rationale="A bank debit can move value to a brokerage or pay a card rather than reduce household net worth. The movement bridge separates those uses.", covered=len(cash_rows), total=max(1, len([item for item in accounts if item.get("type") == "depository"])), sources=transaction_sources),

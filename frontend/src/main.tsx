@@ -1515,6 +1515,8 @@ function Dashboard() {
     "true_monthly_cost",
     "current_card_balance",
   ];
+  const bankCash = byKey.get("cash")?.value || 0;
+  const brokerageCash = byKey.get("taxable_brokerage_cash")?.value || 0;
   return (
     <main>
       <Nav />
@@ -1608,6 +1610,18 @@ function Dashboard() {
               );
             })}
           </section>
+          {brokerageCash > 0 && <section className="liquidity-bridge" aria-label="Liquid cash position">
+            <div>
+              <p className="eyebrow">Liquid cash position</p>
+              <h2>{money.format(bankCash + brokerageCash)}</h2>
+              <p>Bank cash plus taxable brokerage cash equivalents.</p>
+            </div>
+            <dl>
+              <div><dt>Bank cash</dt><dd>{money.format(bankCash)}</dd></div>
+              <div><dt>Brokerage cash equivalents</dt><dd>{money.format(brokerageCash)}</dd></div>
+            </dl>
+            <p className="visual-note">The brokerage amount is already part of Household investment value and Long-term net worth. It appears here only to make available liquidity clear—not to count it twice.</p>
+          </section>}
           <NetWorthVisual dashboard={dashboard} />
           <NetWorthProjection dashboard={dashboard} readiness={dashboard.retirement_readiness} />
           <FinancialChangeStory dashboard={dashboard} />

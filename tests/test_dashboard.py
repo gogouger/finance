@@ -12,7 +12,10 @@ from pathlib import Path
 
 import pytest
 
-from backend.finance_app.dashboard import _net_worth_attribution
+from backend.finance_app.dashboard import (
+    _net_worth_attribution,
+    _taxable_brokerage_cash_equivalents,
+)
 
 
 OWNER = {"X-Forwarded-User": "owner", "X-Auth-Method": "webauthn"}
@@ -83,6 +86,26 @@ def test_net_worth_change_reconciles_opening_drivers_and_ending_value():
     assert result["reconciliation_difference"] == 0
     assert result["coverage"]["covered"] == 3
     assert "Child UTMA" not in result["coverage"]["sources"]
+
+
+def test_brokerage_cash_equivalents_excludes_retirement_and_custodial_cash():
+    accounts = {
+        "brokerage": {"account_id": "brokerage", "type": "investment", "subtype": "brokerage"},
+        "ira": {"account_id": "ira", "type": "investment", "subtype": "ira"},
+        "utma": {"account_id": "utma", "type": "investment", "subtype": "utma"},
+    }
+    securities = {
+        "spaxx": {"security_id": "spaxx", "type": "cash"},
+        "fund": {"security_id": "fund", "type": "mutual fund"},
+    }
+    holdings = [
+        {"account_id": "brokerage", "security_id": "spaxx", "institution_value": 14_177.19},
+        {"account_id": "brokerage", "security_id": "fund", "institution_value": 2_000},
+        {"account_id": "ira", "security_id": "spaxx", "institution_value": 3_000},
+        {"account_id": "utma", "security_id": "spaxx", "institution_value": 1_000},
+    ]
+
+    assert _taxable_brokerage_cash_equivalents(holdings, securities, accounts) == 14_177.19
 
 
 def _unused_port() -> int:
@@ -223,6 +246,7 @@ def test_owner_sees_explainable_metrics_from_normalized_records(
     assert values == {
         "net_worth": 510000,
         "cash": 10000,
+        "taxable_brokerage_cash": 0,
         "debt": 100000,
         "income": 2000,
         "raw_cash_flow": 1748,

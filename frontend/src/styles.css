@@ -544,6 +544,24 @@ footer {
   margin-bottom: 28px;
 }
 
+.liquidity-bridge {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(260px, 1.15fr) minmax(220px, .9fr);
+  gap: 22px;
+  align-items: center;
+  margin: -10px 0 28px;
+  padding: 17px 21px;
+  border-left: 3px solid #7eb6d8;
+  background: rgba(126, 182, 216, .07);
+}
+.liquidity-bridge h2 { margin: 4px 0; font-family: Georgia, "Times New Roman", serif; font-size: clamp(1.7rem, 3vw, 2.35rem); font-weight: 400; font-variant-numeric: tabular-nums; }
+.liquidity-bridge > div > p:last-child { margin: 0; color: #9fb2a7; font-size: .75rem; }
+.liquidity-bridge dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 0; }
+.liquidity-bridge dl div { padding: 8px 10px; border-left: 1px solid rgba(231, 245, 235, .13); }
+.liquidity-bridge dt { color: #9fb2a7; font-size: .64rem; line-height: 1.3; }
+.liquidity-bridge dd { margin: 4px 0 0; font-size: .9rem; font-variant-numeric: tabular-nums; }
+.liquidity-bridge .visual-note { margin: 0; font-size: .68rem; line-height: 1.45; }
+
 .dashboard-metric,
 .dashboard-panel,
 .metric-catalog {
@@ -808,6 +826,7 @@ footer {
   .dashboard-columns {
     grid-template-columns: 1fr;
   }
+  .liquidity-bridge { grid-template-columns: 1fr; gap: 12px; }
   .wealth-layout,.home-value-grid,.financial-change-story:not(:has(.change-story-head)),.projection-controls { grid-template-columns: 1fr; }
   .change-story-head{align-items:start;flex-direction:column}.change-story-head>div:last-child{text-align:left}.change-driver-grid{grid-template-columns:1fr}.change-waterfall{overflow-x:auto}.change-waterfall svg{min-width:680px}
   .account-stats,.account-activity-grid,.investment-summary-grid { grid-template-columns: 1fr; }
@@ -855,6 +874,7 @@ footer {
   .flow-compare {
     grid-template-columns: 1fr;
   }
+  .liquidity-bridge dl { grid-template-columns: 1fr; }
   .growth-control { grid-template-columns: 1fr; gap: 10px; }
   .projection-bars > div { grid-template-columns: 58px 1fr 88px; gap: 8px; }
   .projection-summary { align-items:flex-start; flex-wrap:wrap; }
