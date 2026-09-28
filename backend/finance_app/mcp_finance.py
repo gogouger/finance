@@ -37,7 +37,7 @@ FINANCE_SCOPES = {
     "finance:transactions:detail",
 }
 ATHLETICS_SCOPES = {"athletics:training:summary"}
-LIBRARY_SCOPES = {"library:reading:metrics"}
+LIBRARY_SCOPES = {"library:reading:metrics", "library:write"}
 MCP_SCOPES = FINANCE_SCOPES | ATHLETICS_SCOPES | LIBRARY_SCOPES
 TOOL_SCOPES = {
     "finance.summary": "finance:summary",
@@ -50,6 +50,9 @@ TOOL_SCOPES = {
     "finance.transactions.list": "finance:transactions:detail",
     "athletics.training.summary": "athletics:training:summary",
     "library.reading.metrics": "library:reading:metrics",
+    "library.books.add_owned": "library:write",
+    "library.series.track": "library:write",
+    "library.books.record_review": "library:write",
 }
 DIRECT_IDENTIFIER_KEYS = {
     "account_number",
@@ -331,7 +334,15 @@ def authorization_consent(request: Request) -> HTMLResponse:
         for key, value in hidden.items()
     )
     scopes = "".join(f"<li>{html.escape(scope)}</li>" for scope in payload.scopes)
-    page = f"""<!doctype html><html lang=\"en\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Approve personal data access</title><style>body{{font:16px system-ui,sans-serif;max-width:680px;margin:8vh auto;padding:0 24px;color:#17211c}}main{{border:1px solid #cdd9d0;border-radius:14px;padding:28px}}code{{word-break:break-all}}li{{margin:.4rem 0}}button{{font:inherit;padding:.7rem 1rem;border-radius:8px;border:1px solid #245b38;background:#245b38;color:#fff;cursor:pointer}}button[name=\"decision\"][value=\"deny\"]{{margin-left:.6rem;background:#fff;color:#245b38}}</style><main><p>Personal MCP connection</p><h1>Approve read-only access?</h1><p><strong>{html.escape(payload.client_name)}</strong> is requesting a connection to your personal data gateway.</p><p>Client ID: <code>{html.escape(payload.client_id)}</code></p><h2>Requested scopes</h2><ul>{scopes}</ul><p>Access tokens expire after 10 minutes. The refresh connection expires after 30 days and rotates every time it is used.</p><p>This creates a separately revocable connection. It cannot change accounts, transactions, books, or training data.</p><form method=\"post\" action=\"/mcp/oauth/authorize\">{fields}<button name=\"decision\" value=\"approve\">Approve connection</button><button name=\"decision\" value=\"deny\">Deny</button></form></main></html>"""
+    has_library_write = "library:write" in payload.scopes
+    heading = "Approve Library write access?" if has_library_write else "Approve read-only access?"
+    boundary = (
+        "It can add owned books, track series, and record Library ratings/reviews. "
+        "It cannot delete books, upload files, or change financial or training data."
+        if has_library_write
+        else "It cannot change accounts, transactions, books, or training data."
+    )
+    page = f"""<!doctype html><html lang=\"en\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Approve personal data access</title><style>body{{font:16px system-ui,sans-serif;max-width:680px;margin:8vh auto;padding:0 24px;color:#17211c}}main{{border:1px solid #cdd9d0;border-radius:14px;padding:28px}}code{{word-break:break-all}}li{{margin:.4rem 0}}button{{font:inherit;padding:.7rem 1rem;border-radius:8px;border:1px solid #245b38;background:#245b38;color:#fff;cursor:pointer}}button[name=\"decision\"][value=\"deny\"]{{margin-left:.6rem;background:#fff;color:#245b38}}</style><main><p>Personal MCP connection</p><h1>{heading}</h1><p><strong>{html.escape(payload.client_name)}</strong> is requesting a connection to your personal data gateway.</p><p>Client ID: <code>{html.escape(payload.client_id)}</code></p><h2>Requested scopes</h2><ul>{scopes}</ul><p>Access tokens expire after 10 minutes. The refresh connection expires after 30 days and rotates every time it is used.</p><p>This creates a separately revocable connection. {boundary}</p><form method=\"post\" action=\"/mcp/oauth/authorize\">{fields}<button name=\"decision\" value=\"approve\">Approve connection</button><button name=\"decision\" value=\"deny\">Deny</button></form></main></html>"""
     return HTMLResponse(page, headers={"Cache-Control": "no-store"})
 
 
@@ -606,7 +617,14 @@ def _date_range(arguments: dict) -> tuple[date, date]:
     return start, end
 
 
-def _module_json(base_url: str, path: str) -> dict:
+def _module_json(
+    base_url: str,
+    path: str,
+    *,
+    method: str = "GET",
+    body: dict | None = None,
+    include_command_secret: bool = False,
+) -> dict:
     """Fetch one fixed, internal module endpoint without accepting agent URLs.
 
     The module base URL is deployment configuration, never a tool argument.
@@ -629,9 +647,20 @@ def _module_json(base_url: str, path: str) -> dict:
         headers["Host"] = host_header
     if os.environ.get("MCP_MODULE_INTERNAL") == "1":
         headers["X-Internal-MCP-Module"] = "1"
+    body_bytes = None
+    if body is not None:
+        body_bytes = json.dumps(body, separators=(",", ":")).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    if include_command_secret:
+        command_secret = os.environ.get("BOOKS_MCP_COMMAND_SECRET", "")
+        if not command_secret:
+            raise HTTPException(status_code=503, detail="Library write module is not configured")
+        headers["X-MCP-Command-Secret"] = command_secret
     request = urllib.request.Request(
         url,
+        data=body_bytes,
         headers=headers,
+        method=method,
     )
     try:
         with urllib.request.urlopen(request, timeout=4) as response:
@@ -681,6 +710,25 @@ def _library_metrics() -> dict:
         "lifetime", "this_year", "by_year", "records", "authors", "rating_hist",
     )
     return {key: source[key] for key in keys if key in source}
+
+
+def _library_command(action: str, arguments: dict[str, Any]) -> dict:
+    """Send one allowlisted, scope-gated command to Library's private bridge."""
+    permitted: dict[str, set[str]] = {
+        "add_owned_book": {"title", "authors", "series", "series_index", "book_format", "enrich"},
+        "track_series": {"series"},
+        "record_review": {"title", "authors", "rating", "review", "mark_read"},
+    }
+    unknown = set(arguments) - permitted[action]
+    if unknown:
+        raise HTTPException(status_code=422, detail=f"unsupported Library command fields: {', '.join(sorted(unknown))}")
+    return _module_json(
+        os.environ.get("BOOKS_MCP_BASE_URL", ""),
+        "/library/commands",
+        method="POST",
+        body={"action": action, **arguments},
+        include_command_secret=True,
+    )
 
 
 def _execute_tool(storage, owner: str, payload: ToolCall) -> tuple[dict, str, dict | None]:
@@ -758,6 +806,12 @@ def _execute_tool(storage, owner: str, payload: ToolCall) -> tuple[dict, str, di
         return _athletics_summary(), "aggregate_training", None
     if payload.tool == "library.reading.metrics":
         return _library_metrics(), "aggregate_library", None
+    if payload.tool == "library.books.add_owned":
+        return _library_command("add_owned_book", payload.arguments), "library_write", None
+    if payload.tool == "library.series.track":
+        return _library_command("track_series", payload.arguments), "library_write", None
+    if payload.tool == "library.books.record_review":
+        return _library_command("record_review", payload.arguments), "library_write", None
     raise HTTPException(status_code=404, detail="unknown MCP tool")
 
 
@@ -848,6 +902,46 @@ MCP_TOOLS = {
         "description": "Read aggregate reading and listening metrics without book purchase values or prices.",
         "inputSchema": {"type": "object", "additionalProperties": False},
     },
+    "library.books.add_owned": {
+        "description": "Add one owned book to Library. It may enrich title metadata and a Google Books cover, then returns the created record. Does not upload an ebook file.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "maxLength": 300},
+                "authors": {"type": "string", "maxLength": 500},
+                "series": {"type": "string", "maxLength": 300},
+                "series_index": {"type": "number", "minimum": 0, "maximum": 10000},
+                "book_format": {"type": "string", "enum": ["ebook", "audiobook", "physical", "other"]},
+                "enrich": {"type": "boolean"},
+            },
+            "required": ["title"],
+            "additionalProperties": False,
+        },
+    },
+    "library.series.track": {
+        "description": "Track a Library series and fetch its known entries in the background. This does not claim that every series entry is owned or read.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"series": {"type": "string", "maxLength": 300}},
+            "required": ["series"],
+            "additionalProperties": False,
+        },
+    },
+    "library.books.record_review": {
+        "description": "Add a half-star rating and/or written review to one already-owned book. mark_read may also record it as complete today.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "maxLength": 300},
+                "authors": {"type": "string", "maxLength": 500},
+                "rating": {"type": "number", "minimum": 0.5, "maximum": 5},
+                "review": {"type": "string", "maxLength": 10000},
+                "mark_read": {"type": "boolean"},
+            },
+            "required": ["title"],
+            "additionalProperties": False,
+        },
+    },
 }
 
 
@@ -870,7 +964,11 @@ def _mcp_tool_list(grant: dict) -> list[dict]:
         {
             "name": name,
             **definition,
-            "annotations": {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False},
+            "annotations": {
+                "readOnlyHint": name == "library.reading.metrics" or not name.startswith("library."),
+                "destructiveHint": False,
+                "openWorldHint": False,
+            },
         }
         for name, definition in MCP_TOOLS.items()
         if TOOL_SCOPES[name] in grant["scopes"]

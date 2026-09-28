@@ -530,3 +530,27 @@ def test_central_gateway_only_lists_authorized_cross_project_tools(mcp_service):
     with pytest.raises(urllib.error.HTTPError) as unavailable:
         _call(mcp_service, tokens["access_token"], "athletics.training.summary")
     assert unavailable.value.code == 503
+
+
+def test_library_write_tools_are_separately_scoped_and_marked_mutating(mcp_service):
+    grant = _grant(mcp_service, ["library:write"])
+    tokens = _exchange(mcp_service, grant)
+    listed = _json(
+        _request(
+            f"{mcp_service}/mcp",
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {tokens['access_token']}",
+                "Accept": "application/json, text/event-stream",
+                "MCP-Protocol-Version": "2025-06-18",
+            },
+        )
+    )
+    tools = {item["name"]: item for item in listed["result"]["tools"]}
+    assert set(tools) == {
+        "library.books.add_owned",
+        "library.series.track",
+        "library.books.record_review",
+    }
+    assert all(item["annotations"]["readOnlyHint"] is False for item in tools.values())

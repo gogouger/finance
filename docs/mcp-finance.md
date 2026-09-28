@@ -1,10 +1,13 @@
 # Personal MCP gateway contract
 
-The Finance service is the central, read-only personal MCP gateway. It owns the
+The Finance service is the central personal MCP gateway. It owns the
 passkey-approved OAuth grants and can compose narrow aggregate projections from
 Finance, Athletic Analytics, and Library. It does not expose SQL, arbitrary
 record queries, provider credentials, account numbers, property identifiers,
-GPS routes, per-activity timestamps, purchase prices, or mutation tools.
+GPS routes, per-activity timestamps, purchase prices, or arbitrary mutation
+tools. Its narrowly scoped Library write tools can add an owned book, track a
+series, or record a rating/review; they cannot delete books, upload files,
+alter accounts, or access provider credentials.
 
 ## Connect an agent
 
@@ -63,9 +66,9 @@ Access tokens live for ten minutes. Refresh tokens live for thirty days and rota
 
 The local `/mcp/tools/call` route is the deterministic gateway adapter used in tests. `/api/internal/mcp/finance/tools/call` is its narrow internal equivalent. Both require the same short-lived OAuth bearer token; neither accepts a permanent shared API key. Module base URLs are deployment settings, not tool arguments, so an MCP client cannot make the gateway fetch an arbitrary address.
 
-## Finance scopes and tools
+## Scopes and tools
 
-| Scope | Read-only tools |
+| Scope | Tools |
 | --- | --- |
 | `finance:summary` | `finance.summary`, `finance.cash_flow_trend` |
 | `finance:metrics` | `finance.metric_definitions` |
@@ -75,6 +78,7 @@ The local `/mcp/tools/call` route is the deterministic gateway adapter used in t
 | `finance:transactions:detail` | `finance.transactions.list` |
 | `athletics:training:summary` | `athletics.training.summary` |
 | `library:reading:metrics` | `library.reading.metrics` |
+| `library:write` | `library.books.add_owned`, `library.series.track`, `library.books.record_review` |
 
 Aggregate tools do not return merchant or transaction rows. Scenario responses remove direct-identifier fields. `finance.transactions.list` requires its distinct detail scope and explicit ISO `start` and `end` dates spanning no more than 31 days. Returned transaction fields are allowlisted.
 
@@ -87,3 +91,9 @@ Docker-network listener. Every authenticated tool call appends an audit event wi
 tool, timestamp, requested date range, result sensitivity class, and outcome.
 Audit events exclude access tokens, financial amounts, provider payloads, and
 complete model conversations.
+
+`library:write` is intentionally separate from the reading-metrics scope. Its
+approval grants an agent the ability to change the owner Library: add an owned
+book (with best-effort metadata and a Google Books cover), start tracking a
+series, or write a half-star rating/review to an owned book. Existing agent
+connections need to be re-authorized to receive this new scope.
