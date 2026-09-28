@@ -82,6 +82,59 @@ def fetch_alpha_vantage_weekly_adjusted(
     return observations
 
 
+def fetch_alpha_vantage_weekly_adjusted_symbol(
+    symbol: str, api_key: str, *, fetch=urlopen
+) -> list[dict]:
+    """Return a security's total-return series for lot-date market replay."""
+    symbol = symbol.upper().strip()
+    if not symbol or len(symbol) > 10:
+        raise BenchmarkProviderUnavailable("security symbol is invalid")
+    url = f"{ALPHA_VANTAGE_WEEKLY_ADJUSTED_URL}?{urlencode({'function': 'TIME_SERIES_WEEKLY_ADJUSTED', 'symbol': symbol, 'apikey': api_key})}"
+    try:
+        with fetch(url, timeout=20) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except (HTTPError, URLError, TimeoutError, ValueError) as error:
+        raise BenchmarkProviderUnavailable("market-history provider could not be reached") from error
+    series = payload.get("Weekly Adjusted Time Series") if isinstance(payload, dict) else None
+    if not isinstance(series, dict):
+        raise BenchmarkProviderUnavailable(f"adjusted history is unavailable for {symbol}")
+    observations = []
+    for observation_date, values in series.items():
+        try:
+            datetime.strptime(observation_date, "%Y-%m-%d")
+            value = float(values["5. adjusted close"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if value > 0:
+            observations.append({"date": observation_date, "value": value, "symbol": symbol, "return_basis": "dividend_and_split_adjusted", "cadence": "weekly", "source": "alpha_vantage_weekly_adjusted"})
+    observations.sort(key=lambda item: item["date"])
+    if len(observations) < 2:
+        raise BenchmarkProviderUnavailable(f"adjusted history is unavailable for {symbol}")
+    return observations
+
+
+def refresh_security_histories(storage, owner: str, symbols: list[str]) -> dict:
+    """Cache adjusted market histories for the user's known, lot-backed tickers.
+
+    The provider key remains server-side. A failed or unsupported mutual fund
+    is recorded in the result, never substituted with an unrelated ticker.
+    """
+    api_key = os.environ.get("BENCHMARK_ALPHA_VANTAGE_API_KEY", "").strip()
+    if not api_key:
+        return {"status": "not_configured", "refreshed": [], "unavailable": []}
+    refreshed, unavailable = [], []
+    for symbol in sorted(set(symbols)):
+        try:
+            observations = fetch_alpha_vantage_weekly_adjusted_symbol(symbol, api_key)
+        except BenchmarkProviderUnavailable:
+            unavailable.append(symbol)
+            continue
+        for observation in observations:
+            storage.upsert_financial_record(owner, BENCHMARK_CONNECTION_ID, "security_observation", f"{symbol}:{observation['date']}", observation)
+        refreshed.append(symbol)
+    return {"status": "refreshed", "refreshed": refreshed, "unavailable": unavailable}
+
+
 def fetch_alpha_vantage_weekly_price(
     api_key: str, *, fetch=urlopen
 ) -> list[dict]:

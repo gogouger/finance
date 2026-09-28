@@ -443,6 +443,9 @@ type InvestmentHolding = {
         reason: string;
         definition: string;
   };
+  security_total_return_replay?:
+    | { status: "available"; symbol: string; basis: number; security_value: number; spy_value: number; excess_value: number; security_return_percent: number; spy_return_percent: number; covered_lots: number; as_of: string; definition: string }
+    | { status: "collecting" };
 };
 type AvailableBenchmarkComparison = Extract<InvestmentHolding["benchmark_comparison"], { status: "available" }>;
 type ComparableHolding = InvestmentHolding & { benchmark_comparison: AvailableBenchmarkComparison };
@@ -1346,6 +1349,7 @@ function InvestmentOverview({ data: initialData }: { data: InvestmentResult }) {
   const householdAccounts = data.account_summaries.filter((item) => item.ownership_scope === "household");
   const householdHoldings = data.holdings.filter((item) => item.ownership_scope === "household");
   const comparableHoldings = householdHoldings.filter(hasBenchmarkComparison);
+  const replayHoldings = householdHoldings.filter((holding): holding is InvestmentHolding & { security_total_return_replay: Extract<NonNullable<InvestmentHolding["security_total_return_replay"]>, { status: "available" }> } => holding.security_total_return_replay?.status === "available");
   const unavailableComparisons = householdHoldings.length - comparableHoldings.length;
   const comparisonBasis = comparableHoldings.reduce((sum, holding) => sum + holding.benchmark_comparison.basis_covered, 0);
   const actualComparedValue = comparableHoldings.reduce((sum, holding) => sum + holding.benchmark_comparison.actual_covered_value, 0);
@@ -1397,6 +1401,17 @@ function InvestmentOverview({ data: initialData }: { data: InvestmentResult }) {
           })}
         </div>
         {unavailableComparisons > 0 && <p className="visual-note">{unavailableComparisons} other household positions stay out of this comparison until their Fidelity lot dates and basis are imported; Finance does not fill those gaps with guesses.</p>}
+      </section>}
+      {replayHoldings.length > 0 && <section className="spy-comparison" aria-labelledby="total-return-replay-heading">
+        <div className="section-title"><div><p className="eyebrow">Holding-period market replay</p><h3 id="total-return-replay-heading">How did each security itself do versus the S&amp;P 500?</h3></div><strong>{replayHoldings.length} securities</strong></div>
+        <p className="quiet">This is separate from account cash movement. It replays each reported lot’s dollars from its acquisition date in the security’s dividend-reinvested market history and in dividend-reinvested SPY, so a dividend payer such as T is compared fairly.</p>
+        <div className="spy-holding-grid" aria-label="Security total returns compared with SPY">
+          {replayHoldings.slice().sort((a, b) => Math.abs(b.security_total_return_replay.excess_value) - Math.abs(a.security_total_return_replay.excess_value)).map((holding) => {
+            const replay = holding.security_total_return_replay;
+            const ahead = replay.excess_value >= 0;
+            return <article key={`replay-${holding.account_id}-${holding.security_id}`}><span>{holding.ticker_symbol || holding.security_name || "Investment"}</span><strong className={ahead ? "positive" : "negative"}>{ahead ? "Ahead " : "Behind "}{money.format(Math.abs(replay.excess_value))}</strong><small>{replay.security_return_percent.toFixed(1)}% security total return · {replay.spy_return_percent.toFixed(1)}% SPY</small></article>;
+          })}
+        </div>
       </section>}
       <div className="account-performance-list">
         {householdAccounts.map((account) => {

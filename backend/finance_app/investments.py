@@ -4,6 +4,7 @@ from math import prod
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from .auth import require_owner
+from .benchmark_provider import refresh_security_histories
 from .investment_scope import ownership_scope
 
 
@@ -258,6 +259,40 @@ def _holding_benchmark_comparison(
     }
 
 
+def _security_total_return_replay(lots: list[dict], security_points: list[dict], spy_points: list[dict], symbol: str) -> dict:
+    """Replay each lot into both the security and SPY total-return series.
+
+    This answers the investing question (how did this security perform over
+    my holding periods), independently from whether a broker paid dividends
+    into cash or reinvested them in the account.
+    """
+    usable = [
+        lot for lot in lots
+        if lot.get("acquired_date") and lot.get("cost_basis") is not None
+        and (
+            lot.get("benchmark_eligible", True)
+            or lot.get("benchmark_exclusion_reason")
+            == "Cash distributions are not present in the available activity history, so holding value cannot be compared fairly with dividend-adjusted SPY."
+        )
+    ]
+    if not usable or not security_points or not spy_points:
+        return {"status": "collecting"}
+    security_points = sorted(security_points, key=lambda item: item["date"])
+    spy_points = sorted(spy_points, key=lambda item: item["date"])
+    security_latest, spy_latest = security_points[-1], spy_points[-1]
+    actual, benchmark, basis = 0.0, 0.0, 0.0
+    for lot in usable:
+        security_start = next((point for point in reversed(security_points) if point["date"] <= lot["acquired_date"]), None)
+        spy_start = next((point for point in reversed(spy_points) if point["date"] <= lot["acquired_date"]), None)
+        if not security_start or not spy_start or not security_start["value"] or not spy_start["value"]:
+            return {"status": "collecting"}
+        lot_basis = float(lot["cost_basis"])
+        basis += lot_basis
+        actual += lot_basis * float(security_latest["value"]) / float(security_start["value"])
+        benchmark += lot_basis * float(spy_latest["value"]) / float(spy_start["value"])
+    return {"status": "available", "symbol": symbol, "basis": _money(basis), "security_value": _money(actual), "spy_value": _money(benchmark), "excess_value": _money(actual - benchmark), "security_return_percent": round((actual / basis - 1) * 100, 2), "spy_return_percent": round((benchmark / basis - 1) * 100, 2), "covered_lots": len(usable), "as_of": min(security_latest["date"], spy_latest["date"]), "definition": "Total-return market replay using the same reported lot basis and acquisition dates; dividends and splits are reinvested in both the security and SPY."}
+
+
 @router.get("/api/private/investments/positions")
 def investment_positions(request: Request) -> dict:
     owner = require_owner(request)
@@ -321,6 +356,7 @@ def investment_positions(request: Request) -> dict:
         if current is None or preference(candidate) > preference(current):
             holdings_by_position[position_key] = candidate
     tax_lots = _active_records(storage, owner, "tax_lot")
+    security_observations = _active_records(storage, owner, "security_observation")
     spy_price_points = [
         item
         for item in _active_records(storage, owner, "benchmark_observation")
@@ -526,6 +562,12 @@ def investment_positions(request: Request) -> dict:
             spy_price_points,
             allow_price_only_dividend_exclusion=True,
         )
+        holding["security_total_return_replay"] = _security_total_return_replay(
+            matching_lots,
+            [item for item in security_observations if item.get("symbol") == holding.get("ticker_symbol")],
+            [item for item in _active_records(storage, owner, "benchmark_observation") if item.get("symbol") == "SPY" and item.get("return_basis") == "dividend_and_split_adjusted"],
+            str(holding.get("ticker_symbol") or ""),
+        )
     return {
         "currency": "USD",
         "summary": {
@@ -547,6 +589,17 @@ def investment_positions(request: Request) -> dict:
         "securities": list(securities.values()),
         "freshness": freshness,
     }
+
+
+@router.post("/api/private/investments/market-history/refresh")
+def refresh_investment_market_histories(request: Request) -> dict:
+    owner = require_owner(request)
+    symbols = [
+        str(item.get("symbol") or "")
+        for item in _active_records(request.app.state.storage, owner, "tax_lot")
+        if item.get("symbol")
+    ]
+    return refresh_security_histories(request.app.state.storage, owner, symbols)
 
 
 @router.get("/api/private/investments/performance")
