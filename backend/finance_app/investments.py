@@ -59,6 +59,32 @@ def _resolve_imported_account(account_id: str, accounts: dict[str, dict]) -> tup
     return account_id, None
 
 
+def _position_identity(holding: dict, candidate: dict) -> str:
+    """Collapse an imported generic Fidelity core-cash row onto Plaid cash.
+
+    Fidelity's positions export labels a core balance ``SPAXX**`` (or FDRXX**)
+    and "HELD IN MONEY MARKET", while Plaid returns the actual fund name and
+    symbol.  They are one balance, not two investments.  Only the generic
+    export label and a Plaid money-market row share this identity; distinct
+    investable funds retain their ordinary symbol identity.
+    """
+    source = str(holding.get("source") or "")
+    description = " ".join(
+        str(candidate.get(field) or "")
+        for field in ("ticker_symbol", "security_name", "description", "security_type")
+    ).casefold()
+    is_generic_fidelity_cash = (
+        source == "fidelity_positions_csv"
+        and "held in money market" in description
+    )
+    is_plaid_money_market = (
+        source == "plaid_cached" and "money market" in description
+    )
+    if is_generic_fidelity_cash or is_plaid_money_market:
+        return "__reported_core_cash__"
+    return str(candidate.get("ticker_symbol") or candidate["security_id"])
+
+
 def _xirr(cash_flows: list[tuple[date, float]]) -> float | None:
     if not cash_flows or not any(value < 0 for _, value in cash_flows) or not any(
         value > 0 for _, value in cash_flows
@@ -103,12 +129,25 @@ def _holding_benchmark_comparison(
         if item.get("cost_basis") is not None
         and item.get("quantity")
         and item.get("acquired_date")
+        and item.get("benchmark_eligible", True)
     ]
     if not usable_lots:
+        exclusion_reasons = sorted(
+            {
+                str(item.get("benchmark_exclusion_reason"))
+                for item in lots
+                if item.get("benchmark_eligible") is False
+                and item.get("benchmark_exclusion_reason")
+            }
+        )
         return {
             "status": "unavailable",
             "benchmark": benchmark,
-            "reason": "Tax-lot acquisition dates and basis are required.",
+            "reason": (
+                exclusion_reasons[0]
+                if exclusion_reasons
+                else "Tax-lot acquisition dates and basis are required."
+            ),
             "definition": definition,
         }
     points = sorted(
@@ -239,11 +278,16 @@ def investment_positions(request: Request) -> dict:
             ),
             "security_name": security.get("name") or holding.get("description"),
             "ticker_symbol": security.get("ticker_symbol") or holding.get("symbol"),
-            "ownership_scope": ownership_scope(resolved_account),
+            "ownership_scope": (
+                "unlinked"
+                if resolved_account is None
+                and str(holding.get("source") or "").endswith("_csv")
+                else ownership_scope(resolved_account)
+            ),
         }
         position_key = (
             candidate["account_id"],
-            candidate.get("ticker_symbol") or candidate["security_id"],
+            _position_identity(holding, candidate),
         )
         current = holdings_by_position.get(position_key)
 
@@ -364,12 +408,20 @@ def investment_positions(request: Request) -> dict:
                 for item in account_activity
                 if item.get("subtype") in subtypes
             )
+        account_scope = (
+            "unlinked"
+            if account_holdings and all(
+                item["ownership_scope"] == "unlinked"
+                for item in account_holdings
+            )
+            else ownership_scope(account)
+        )
         account_summaries.append(
             {
                 "account_id": account_id,
                 "name": account.get("name") or account.get("official_name") or "Investment account",
                 "subtype": account.get("subtype"),
-                "ownership_scope": ownership_scope(account),
+                "ownership_scope": account_scope,
                 "tax_treatment": treatment,
                 "market_value": _money(market_value),
                 "position_count": len(account_holdings),

@@ -13,6 +13,7 @@ import pytest
 
 from backend.finance_app.investments import (
     _holding_benchmark_comparison,
+    _position_identity,
     _tax_treatment,
 )
 from backend.finance_app.sync import _reported_tax_lots
@@ -163,6 +164,38 @@ def test_holding_benchmark_refuses_to_guess_without_lot_history():
 
     assert comparison["status"] == "unavailable"
     assert "acquisition dates" in comparison["reason"]
+
+
+def test_holding_benchmark_respects_explicit_data_quality_exclusion():
+    comparison = _holding_benchmark_comparison(
+        {"quantity": 10, "institution_value": 1_500},
+        [{
+            "quantity": 10,
+            "cost_basis": 1_000,
+            "acquired_date": "2024-01-01",
+            "benchmark_eligible": False,
+            "benchmark_exclusion_reason": "Cash distributions are missing.",
+        }],
+        [{"date": "2024-01-01", "value": 100}],
+    )
+    assert comparison["status"] == "unavailable"
+    assert comparison["reason"] == "Cash distributions are missing."
+
+
+def test_generic_fidelity_core_cash_and_plaid_money_market_share_one_identity():
+    imported = {
+        "source": "fidelity_positions_csv",
+        "security_id": "fidelity:SPAXX**",
+    }
+    plaid = {"source": "plaid_cached", "security_id": "plaid:SPAXX"}
+    assert _position_identity(
+        imported,
+        {"ticker_symbol": "SPAXX**", "security_name": "HELD IN MONEY MARKET"},
+    ) == "__reported_core_cash__"
+    assert _position_identity(
+        plaid,
+        {"ticker_symbol": "SPAXX", "security_name": "Fidelity Government Money Market Fund"},
+    ) == "__reported_core_cash__"
 
 
 def test_reported_tax_lots_preserve_exact_institution_fields():

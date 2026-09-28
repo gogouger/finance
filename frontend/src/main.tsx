@@ -370,7 +370,7 @@ type InvestmentAccountSummary = {
   account_id: string;
   name: string;
   subtype: string | null;
-  ownership_scope: "household" | "custodial";
+  ownership_scope: "household" | "custodial" | "unlinked";
   tax_treatment: "taxable" | "tax_deferred" | "roth" | "hsa" | "custodial";
   market_value: number;
   position_count: number;
