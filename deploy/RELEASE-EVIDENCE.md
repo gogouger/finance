@@ -38,4 +38,13 @@ Production linking remains disabled until the live deployment owner changes `sta
 
 Do not approve the gate based only on this document. Record timestamped outputs from the live backup/restore, resource inspection, accessibility checks, Cloudflare/origin inspection, dependency/secret scans, and scoped ZAP staging scans. Until all evidence is current and reviewed, production linking remains disabled.
 
-The 30 daily/12 monthly snapshots currently persist on the VM backup volume. They are encrypted and suitable for copying, but they are not yet off-host. Personal iCloud Drive has no supported unattended Linux server integration; do not store an Apple password or automate the consumer web UI. Off-host replication therefore remains an explicit deployment gap until the owner chooses a supported encrypted object target (for example Cloudflare R2 or Backblaze B2). That gap is another reason the checked-in release status remains `blocked`.
+Encrypted off-host replication is active through the configured Cloudflare R2
+crypt remote. Object-locked history is retained when it fits beneath the
+application safety ceiling; when the immutable history cannot be pruned, a
+separately encrypted rolling recovery point is uploaded and verified instead.
+The live backup-status record is the authority for freshness, verification
+mode, and remote byte usage. Personal iCloud Drive remains intentionally
+excluded because it has no supported unattended Linux server integration; no
+Apple password or consumer-web automation is stored on the VM. The checked-in
+release status remains `blocked` until the independent release checks above are
+captured and reviewed.
