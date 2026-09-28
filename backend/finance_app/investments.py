@@ -73,15 +73,23 @@ def _position_identity(holding: dict, candidate: dict) -> str:
         str(candidate.get(field) or "")
         for field in ("ticker_symbol", "security_name", "description", "security_type")
     ).casefold()
+    symbol = str(candidate.get("ticker_symbol") or "").upper()
     is_generic_fidelity_cash = (
         source == "fidelity_positions_csv"
         and "held in money market" in description
     )
-    is_plaid_money_market = (
-        source == "plaid_cached" and "money market" in description
+    is_plaid_core_cash = (
+        source == "plaid_cached"
+        and (
+            "money market" in description
+            or "cash reserves" in description
+            or symbol in {"SPAXX", "FDRXX"}
+        )
     )
-    if is_generic_fidelity_cash or is_plaid_money_market:
-        return "__reported_core_cash__"
+    if is_generic_fidelity_cash:
+        return f"__reported_core_cash__:{symbol.rstrip('*')}"
+    if is_plaid_core_cash:
+        return f"__reported_core_cash__:{symbol}"
     return str(candidate.get("ticker_symbol") or candidate["security_id"])
 
 

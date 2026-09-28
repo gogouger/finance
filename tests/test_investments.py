@@ -191,11 +191,18 @@ def test_generic_fidelity_core_cash_and_plaid_money_market_share_one_identity():
     assert _position_identity(
         imported,
         {"ticker_symbol": "SPAXX**", "security_name": "HELD IN MONEY MARKET"},
-    ) == "__reported_core_cash__"
+    ) == "__reported_core_cash__:SPAXX"
     assert _position_identity(
         plaid,
         {"ticker_symbol": "SPAXX", "security_name": "Fidelity Government Money Market Fund"},
-    ) == "__reported_core_cash__"
+    ) == "__reported_core_cash__:SPAXX"
+    assert _position_identity(
+        {"source": "fidelity_positions_csv", "security_id": "fidelity:FDRXX**"},
+        {"ticker_symbol": "FDRXX**", "security_name": "HELD IN MONEY MARKET"},
+    ) == _position_identity(
+        {"source": "plaid_cached", "security_id": "plaid:FDRXX"},
+        {"ticker_symbol": "FDRXX", "security_name": "Fidelity Government Cash Reserves Fund"},
+    )
 
 
 def test_reported_tax_lots_preserve_exact_institution_fields():
