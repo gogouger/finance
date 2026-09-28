@@ -1379,10 +1379,10 @@ function InvestmentOverview({ data: initialData }: { data: InvestmentResult }) {
           <div><p className="eyebrow">S&amp;P 500 comparison</p><h3 id="spy-comparison-heading">Did your covered holdings beat SPY?</h3></div>
           <strong className={comparisonDifference >= 0 ? "positive" : "negative"}>{comparisonDifference >= 0 ? "Ahead " : "Behind "}{money.format(Math.abs(comparisonDifference))}</strong>
         </div>
-        <p className="quiet">This matches each imported tax lot’s reported cost basis and acquisition date against the same dollars in dividend- and split-adjusted SPY. It is a comparison of the {comparableHoldings.length} positions with complete lots—not your whole portfolio.</p>
+        <p className="quiet">This matches each imported tax lot’s reported cost basis and acquisition date against the same dollars in price-only SPY. That keeps it fair when a brokerage value excludes cash dividends. It is a comparison of the {comparableHoldings.length} positions with complete lots—not your whole portfolio.</p>
         <figure className="spy-comparison-chart" aria-label={`Covered holdings returned ${actualComparedReturn.toFixed(1)} percent compared with ${spyComparedReturn.toFixed(1)} percent for SPY`}>
           <div><span>Your covered holdings <strong>{money.format(actualComparedValue)}</strong><small>{actualComparedReturn.toFixed(1)}% since each lot’s purchase date</small></span><i><b style={{ width: `${actualComparedValue / comparisonMax * 100}%` }} /></i></div>
-          <div><span>Same dollars in SPY <strong>{money.format(spyComparedValue)}</strong><small>{spyComparedReturn.toFixed(1)}% with dividends and splits adjusted</small></span><i className="spy-bar"><b style={{ width: `${spyComparedValue / comparisonMax * 100}%` }} /></i></div>
+          <div><span>Same dollars in SPY <strong>{money.format(spyComparedValue)}</strong><small>{spyComparedReturn.toFixed(1)}% price return · dividends excluded on both sides</small></span><i className="spy-bar"><b style={{ width: `${spyComparedValue / comparisonMax * 100}%` }} /></i></div>
           <figcaption>{money.format(comparisonBasis)} across {comparableHoldings.reduce((sum, holding) => sum + holding.benchmark_comparison.covered_lots, 0)} tax lots · weekly benchmark alignment · through {new Date(`${comparableHoldings[0].benchmark_comparison.as_of}T00:00:00`).toLocaleDateString()}</figcaption>
         </figure>
         <div className="spy-holding-grid" aria-label="Individual holdings compared with SPY">

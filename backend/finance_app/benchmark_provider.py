@@ -24,6 +24,14 @@ def _weekly_adjusted_url(api_key: str) -> str:
     })}"
 
 
+def _weekly_price_url(api_key: str) -> str:
+    return f"{ALPHA_VANTAGE_WEEKLY_ADJUSTED_URL}?{urlencode({
+        'function': 'TIME_SERIES_WEEKLY',
+        'symbol': 'SPY',
+        'apikey': api_key,
+    })}"
+
+
 def fetch_alpha_vantage_weekly_adjusted(
     api_key: str, *, fetch=urlopen
 ) -> list[dict]:
@@ -74,14 +82,64 @@ def fetch_alpha_vantage_weekly_adjusted(
     return observations
 
 
+def fetch_alpha_vantage_weekly_price(
+    api_key: str, *, fetch=urlopen
+) -> list[dict]:
+    """Fetch raw weekly SPY closes for price-return comparisons.
+
+    A broker position's current market value does not include cash dividends
+    that were paid out rather than reinvested. Comparing that number to an
+    adjusted (total-return) benchmark unfairly penalizes it.  This companion
+    series therefore keeps the primary holding comparison price-to-price.
+    """
+    try:
+        with fetch(_weekly_price_url(api_key), timeout=20) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except (HTTPError, URLError, TimeoutError, ValueError) as error:
+        raise BenchmarkProviderUnavailable("benchmark provider could not be reached") from error
+    if not isinstance(payload, dict):
+        raise BenchmarkProviderUnavailable("benchmark provider returned an invalid response")
+    if payload.get("Note") or payload.get("Information") or payload.get("Error Message"):
+        raise BenchmarkProviderUnavailable("benchmark provider declined the refresh")
+    series = payload.get("Weekly Time Series")
+    if not isinstance(series, dict):
+        raise BenchmarkProviderUnavailable("benchmark provider returned no weekly price history")
+    observations = []
+    for observation_date, values in series.items():
+        try:
+            datetime.strptime(observation_date, "%Y-%m-%d")
+            close = float(values["4. close"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if close > 0:
+            observations.append({
+                "date": observation_date,
+                "value": close,
+                "symbol": "SPY",
+                "currency": "USD",
+                "source": "alpha_vantage_weekly_price",
+                "return_basis": "price_return",
+                "cadence": "weekly",
+                "alignment": "latest_weekly_observation_on_or_before_lot_date",
+            })
+    observations.sort(key=lambda item: item["date"])
+    if len(observations) < 2:
+        raise BenchmarkProviderUnavailable("benchmark provider returned too little usable history")
+    return observations
+
+
 def refresh_spy_benchmark(storage, owner: str) -> dict:
     """Persist one complete encrypted adjusted-SPY history for an owner."""
     api_key = os.environ.get("BENCHMARK_ALPHA_VANTAGE_API_KEY", "").strip()
     if not api_key:
         return {"status": "not_configured", "observations": 0}
-    observations = fetch_alpha_vantage_weekly_adjusted(api_key)
+    total_return_observations = fetch_alpha_vantage_weekly_adjusted(api_key)
+    price_observations = fetch_alpha_vantage_weekly_price(api_key)
     observed_at = datetime.now(UTC).isoformat()
-    for observation in observations:
+    # Preserve the original source identity for adjusted observations so an
+    # upgrade does not strand the previously cached history. Price-return
+    # observations use their own identity beside it.
+    for observation in total_return_observations:
         storage.upsert_financial_record(
             owner,
             BENCHMARK_CONNECTION_ID,
@@ -89,10 +147,19 @@ def refresh_spy_benchmark(storage, owner: str) -> dict:
             f"SPY:{observation['date']}",
             {**observation, "observed_at": observed_at},
         )
+    for observation in price_observations:
+        storage.upsert_financial_record(
+            owner,
+            BENCHMARK_CONNECTION_ID,
+            "benchmark_observation",
+            f"SPY:price:{observation['date']}",
+            {**observation, "observed_at": observed_at},
+        )
     return {
         "status": "refreshed",
-        "observations": len(observations),
-        "start": observations[0]["date"],
-        "end": observations[-1]["date"],
+        "observations": len(total_return_observations) + len(price_observations),
+        "start": price_observations[0]["date"],
+        "end": price_observations[-1]["date"],
         "cadence": "weekly",
+        "series": ["price_return", "dividend_and_split_adjusted"],
     }

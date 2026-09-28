@@ -182,6 +182,27 @@ def test_holding_benchmark_respects_explicit_data_quality_exclusion():
     assert comparison["reason"] == "Cash distributions are missing."
 
 
+def test_price_comparison_can_include_a_dividend_payer_without_claiming_total_return():
+    comparison = _holding_benchmark_comparison(
+        {"quantity": 10, "institution_value": 1_100},
+        [{
+            "quantity": 10,
+            "cost_basis": 1_000,
+            "acquired_date": "2024-01-01",
+            "benchmark_eligible": False,
+            "benchmark_exclusion_reason": "Cash distributions are not present in the available activity history, so holding value cannot be compared fairly with dividend-adjusted SPY.",
+        }],
+        [
+            {"date": "2024-01-01", "value": 100, "return_basis": "price_return"},
+            {"date": "2025-01-01", "value": 105, "return_basis": "price_return"},
+        ],
+        allow_price_only_dividend_exclusion=True,
+    )
+    assert comparison["status"] == "available"
+    assert comparison["benchmark_value"] == 1050
+    assert comparison["return_basis"] == "price_return"
+
+
 def test_generic_fidelity_core_cash_and_plaid_money_market_share_one_identity():
     imported = {
         "source": "fidelity_positions_csv",

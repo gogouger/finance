@@ -126,6 +126,7 @@ def _holding_benchmark_comparison(
     benchmark_points: list[dict],
     *,
     benchmark: str = "SPY",
+    allow_price_only_dividend_exclusion: bool = False,
 ) -> dict:
     definition = (
         "Compares each covered tax lot with investing the same reported cost "
@@ -137,7 +138,14 @@ def _holding_benchmark_comparison(
         if item.get("cost_basis") is not None
         and item.get("quantity")
         and item.get("acquired_date")
-        and item.get("benchmark_eligible", True)
+        and (
+            item.get("benchmark_eligible", True)
+            or (
+                allow_price_only_dividend_exclusion
+                and item.get("benchmark_exclusion_reason")
+                == "Cash distributions are not present in the available activity history, so holding value cannot be compared fairly with dividend-adjusted SPY."
+            )
+        )
     ]
     if not usable_lots:
         exclusion_reasons = sorted(
@@ -243,9 +251,9 @@ def _holding_benchmark_comparison(
         "definition": definition,
         "limitations": [
             "Actual value is allocated to covered lots by current share quantity.",
-            "The comparison depends on stored dividend- and split-adjusted benchmark observations and reported acquisition dates and basis.",
+            "This is a price-return comparison: it excludes cash dividends, reinvested distributions, taxes, and trading costs on both sides.",
+            "A total-return comparison requires the account's actual dividend/distribution history; public dividend data cannot prove what was paid or reinvested in this account.",
             "Weekly source points use the latest weekly observation on or before each lot date; this is an intentional date-alignment approximation.",
-            "Taxes, trading costs, and position-level cash distributions not reflected in current value are excluded.",
         ],
     }
 
@@ -313,10 +321,10 @@ def investment_positions(request: Request) -> dict:
         if current is None or preference(candidate) > preference(current):
             holdings_by_position[position_key] = candidate
     tax_lots = _active_records(storage, owner, "tax_lot")
-    spy_benchmark_points = [
+    spy_price_points = [
         item
         for item in _active_records(storage, owner, "benchmark_observation")
-        if item.get("symbol") == "SPY"
+        if item.get("symbol") == "SPY" and item.get("return_basis") == "price_return"
     ]
     for lot in tax_lots:
         source_account = str(lot.get("account_id") or "")
@@ -515,7 +523,8 @@ def investment_positions(request: Request) -> dict:
         holding["benchmark_comparison"] = _holding_benchmark_comparison(
             holding,
             matching_lots,
-            spy_benchmark_points,
+            spy_price_points,
+            allow_price_only_dividend_exclusion=True,
         )
     return {
         "currency": "USD",
