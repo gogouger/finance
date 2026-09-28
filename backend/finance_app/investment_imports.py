@@ -1,6 +1,7 @@
 import csv
 import hashlib
 import json
+import re
 from datetime import UTC, date, datetime
 from io import StringIO
 
@@ -25,6 +26,18 @@ FIDELITY_COLUMNS = {
     "Cost Basis Total",
     "Date Acquired",
     "As Of Date",
+}
+FIDELITY_POSITION_COLUMNS = {
+    "Account number",
+    "Account name",
+    "Symbol",
+    "Description",
+    "Quantity",
+    "Current value",
+    "Cost basis total",
+    "Total gain/loss dollar",
+    "Total gain/loss percent",
+    "Type",
 }
 VESTWELL_COLUMNS = {
     "Record Type",
@@ -60,6 +73,21 @@ def _number(value: str, field: str, row_number: int, *, optional: bool = False) 
     if result < 0:
         raise ValueError(f"row {row_number}: {field} cannot be negative")
     return result
+
+
+def _signed_number(value: str, field: str, row_number: int, *, optional: bool = False) -> float | None:
+    cleaned = value.strip().replace("$", "").replace(",", "").replace("+", "")
+    if optional and not cleaned:
+        return None
+    try:
+        return float(cleaned)
+    except ValueError as error:
+        raise ValueError(f"row {row_number}: {field} must be a number") from error
+
+
+def _percent(value: str, field: str, row_number: int, *, optional: bool = False) -> float | None:
+    cleaned = value.strip().replace("%", "")
+    return _signed_number(cleaned, field, row_number, optional=optional)
 
 
 def _date(value: str, field: str, row_number: int) -> str:
@@ -120,6 +148,94 @@ def parse_fidelity(content: str) -> list[dict]:
                 "source": "fidelity_csv",
             }
         )
+    return records
+
+
+def _fidelity_position_effective_date(content: str) -> str:
+    """Read Fidelity's stated report date rather than treating an import date as one."""
+    match = re.search(
+        r"Date downloaded\s+([A-Za-z]{3}-\d{1,2}-\d{4})",
+        content,
+    )
+    if not match:
+        raise ValueError("missing Fidelity Date downloaded footer")
+    try:
+        return datetime.strptime(match.group(1), "%b-%d-%Y").date().isoformat()
+    except ValueError as error:
+        raise ValueError("Fidelity Date downloaded is invalid") from error
+
+
+def parse_fidelity_positions(content: str) -> list[dict]:
+    """Parse Fidelity's position-level export without fabricating tax lots."""
+    effective_date = _fidelity_position_effective_date(content)
+    rows = _rows(content, FIDELITY_POSITION_COLUMNS)
+    records = []
+    identities: set[tuple[str, str]] = set()
+    for row_number, row in enumerate(rows, start=2):
+        # Fidelity appends disclosure rows after a blank line. They carry no
+        # account number and are deliberately outside the position snapshot.
+        account_id = (row.get("Account number") or "").strip()
+        if not account_id:
+            continue
+        symbol = (row.get("Symbol") or "").strip().upper()
+        description = (row.get("Description") or "").strip()
+        account_name = (row.get("Account name") or "").strip()
+        if not any((symbol, description, account_name)):
+            continue
+        if not symbol or not description or not account_name:
+            raise ValueError(
+                f"row {row_number}: account name, symbol, and description are required"
+            )
+        identity = (account_id, symbol)
+        if identity in identities:
+            raise ValueError(f"duplicate position at row {row_number}")
+        identities.add(identity)
+        description_key = description.casefold()
+        records.append(
+            {
+                "kind": "holding",
+                "account_id": account_id,
+                "account_name": account_name,
+                "security_id": f"fidelity_positions:{account_id}:{symbol}",
+                "symbol": symbol,
+                "description": description,
+                "quantity": _number(
+                    row.get("Quantity") or "", "Quantity", row_number, optional=True
+                ),
+                "institution_value": _number(
+                    row.get("Current value") or "", "Current value", row_number
+                ),
+                "cost_basis": _number(
+                    row.get("Cost basis total") or "", "Cost basis total", row_number, optional=True
+                ),
+                "cost_basis_status": (
+                    "reported" if (row.get("Cost basis total") or "").strip() else "unknown"
+                ),
+                "reported_total_gain": _signed_number(
+                    row.get("Total gain/loss dollar") or "",
+                    "Total gain/loss dollar",
+                    row_number,
+                    optional=True,
+                ),
+                "reported_total_gain_percent": _percent(
+                    row.get("Total gain/loss percent") or "",
+                    "Total gain/loss percent",
+                    row_number,
+                    optional=True,
+                ),
+                "security_type": (
+                    "cash equivalent"
+                    if "held in money market" in description_key
+                    else None
+                ),
+                "effective_date": effective_date,
+                "currency": "USD",
+                "iso_currency_code": "USD",
+                "source": "fidelity_positions_csv",
+            }
+        )
+    if not records:
+        raise ValueError("the export contains no position rows")
     return records
 
 
@@ -317,6 +433,25 @@ def commit_fidelity(payload: ImportPayload, request: Request) -> dict:
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     return _commit(request, owner, "fidelity", records)
+
+
+@router.post("/api/private/investments/imports/fidelity-positions/preview")
+def preview_fidelity_positions(payload: ImportPayload, request: Request) -> dict:
+    require_owner(request)
+    try:
+        return _preview("fidelity_positions", parse_fidelity_positions(payload.content))
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@router.post("/api/private/investments/imports/fidelity-positions/commit")
+def commit_fidelity_positions(payload: ImportPayload, request: Request) -> dict:
+    owner = require_owner(request)
+    try:
+        records = parse_fidelity_positions(payload.content)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return _commit(request, owner, "fidelity_positions", records)
 
 
 @router.post("/api/private/investments/imports/vestwell/preview")

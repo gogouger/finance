@@ -39,6 +39,26 @@ def _tax_treatment(account: dict | None) -> str:
     return "taxable"
 
 
+def _resolve_imported_account(account_id: str, accounts: dict[str, dict]) -> tuple[str, dict | None]:
+    """Match a fallback export's account number to a connected account mask.
+
+    Fidelity reports an account number while Plaid uses its own opaque account
+    identifier. A unique trailing-mask match keeps imported holdings in the
+    right ownership and tax bucket without guessing when an ambiguous match
+    exists.
+    """
+    if account_id in accounts:
+        return account_id, accounts[account_id]
+    matches = [
+        account
+        for account in accounts.values()
+        if account.get("mask") and account_id.endswith(str(account["mask"]))
+    ]
+    if len(matches) == 1:
+        return matches[0]["account_id"], matches[0]
+    return account_id, None
+
+
 def _xirr(cash_flows: list[tuple[date, float]]) -> float | None:
     if not cash_flows or not any(value < 0 for _, value in cash_flows) or not any(
         value > 0 for _, value in cash_flows
@@ -200,13 +220,20 @@ def investment_positions(request: Request) -> dict:
     holdings_by_position: dict[tuple[str, str], dict] = {}
     for holding in _active_records(storage, owner, "holding"):
         security = securities.get(holding["security_id"], {})
+        resolved_account_id, resolved_account = _resolve_imported_account(
+            str(holding.get("account_id") or ""), accounts_by_id
+        )
         candidate = {
             **holding,
+            "account_id": resolved_account_id,
+            **(
+                {"source_account_id": holding["account_id"]}
+                if resolved_account_id != holding.get("account_id")
+                else {}
+            ),
             "security_name": security.get("name") or holding.get("description"),
             "ticker_symbol": security.get("ticker_symbol") or holding.get("symbol"),
-            "ownership_scope": ownership_scope(
-                accounts_by_id.get(holding.get("account_id"))
-            ),
+            "ownership_scope": ownership_scope(resolved_account),
         }
         position_key = (
             candidate["account_id"],

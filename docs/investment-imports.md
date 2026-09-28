@@ -21,6 +21,26 @@ Fidelity lots enrich a Plaid holding only when its provider basis is missing and
 every matching imported lot has a known basis. Finance never sums a partial lot
 set into an apparently complete basis.
 
+## Fidelity positions
+
+Routes:
+
+- `POST /api/private/investments/imports/fidelity-positions/preview`
+- `POST /api/private/investments/imports/fidelity-positions/commit`
+
+Fidelity's **Portfolio Positions** export provides a point-in-time holding,
+current value, and position-level cost basis. It requires the export's `Account
+number`, `Account name`, `Symbol`, `Description`, `Quantity`, `Current value`,
+`Cost basis total`, `Total gain/loss dollar`, `Total gain/loss percent`, and
+`Type` columns, plus its `Date downloaded` footer. The report date becomes the
+effective date. Fidelity disclosure rows are ignored.
+
+Position exports improve current allocation, gain, and basis coverage. They do
+not include acquisition dates, so they never enable a tax-lot or SPY comparison
+on their own. A unique connected-account mask match is used when Fidelity and
+Plaid identify the same account differently; an ambiguous account stays
+unmatched rather than being assigned to the wrong ownership or tax treatment.
+
 ## Vestwell fallback
 
 Routes:

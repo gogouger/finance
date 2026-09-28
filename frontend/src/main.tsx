@@ -1291,34 +1291,38 @@ function RecommendationQueue({ data, saved }: { data: DashboardResult["recommend
 
 function InvestmentOverview({ data: initialData }: { data: InvestmentResult }) {
   const [data, setData] = useState(initialData);
-  const [lotImport, setLotImport] = useState<{ content: string; count: number } | null>(null);
+  const [fidelityImport, setFidelityImport] = useState<{ content: string; count: number; label: string; endpoint: string } | null>(null);
   const [lotImportStatus, setLotImportStatus] = useState("");
   useEffect(() => setData(initialData), [initialData]);
   const previewLots = async (file?: File) => {
     if (!file) return;
     setLotImportStatus("Checking Fidelity export…");
     const content = await file.text();
-    const response = await fetch("/api/private/investments/imports/fidelity/preview", {
+    const isPositionExport = content.replace(/^\ufeff/, "").startsWith("Account number,Account name,");
+    const endpoint = isPositionExport ? "fidelity-positions" : "fidelity";
+    const response = await fetch(`/api/private/investments/imports/${endpoint}/preview`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ content }),
     });
     const result = await response.json();
     if (!response.ok) {
-      setLotImport(null);
+      setFidelityImport(null);
       setLotImportStatus(result.detail || "That file could not be read.");
       return;
     }
-    setLotImport({ content, count: result.counts.tax_lots });
-    setLotImportStatus(`${result.counts.tax_lots} lots are ready to import.`);
+    const count = isPositionExport ? result.counts.holdings : result.counts.tax_lots;
+    const label = isPositionExport ? "positions" : "lots";
+    setFidelityImport({ content, count, label, endpoint });
+    setLotImportStatus(`${count} ${label} are ready to import.`);
   };
   const commitLots = async () => {
-    if (!lotImport) return;
-    setLotImportStatus("Importing reviewed lots…");
-    const response = await fetch("/api/private/investments/imports/fidelity/commit", {
+    if (!fidelityImport) return;
+    setLotImportStatus(`Importing reviewed ${fidelityImport.label}…`);
+    const response = await fetch(`/api/private/investments/imports/${fidelityImport.endpoint}/commit`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content: lotImport.content }),
+      body: JSON.stringify({ content: fidelityImport.content }),
     });
     const result = await response.json();
     if (!response.ok) {
@@ -1327,8 +1331,8 @@ function InvestmentOverview({ data: initialData }: { data: InvestmentResult }) {
     }
     const refreshed = await fetch("/api/private/investments/positions");
     if (refreshed.ok) setData(await refreshed.json());
-    setLotImport(null);
-    setLotImportStatus(`${result.result.created} lots added; ${result.result.unchanged} were already present.`);
+    setFidelityImport(null);
+    setLotImportStatus(`${result.result.created} ${fidelityImport.label} added; ${result.result.unchanged} were already present.`);
   };
   const householdAccounts = data.account_summaries.filter((item) => item.ownership_scope === "household");
   const householdHoldings = data.holdings.filter((item) => item.ownership_scope === "household");
@@ -1400,11 +1404,11 @@ function InvestmentOverview({ data: initialData }: { data: InvestmentResult }) {
         })}
       </div>
       <details className="lot-import">
-        <summary>Add exact Fidelity tax lots for the SPY comparison</summary>
-        <p>The connected Fidelity account currently supplies position-level basis, but no remaining-lot records. Finance never guesses lots from trade history. Upload Fidelity’s lot-level CSV to add the acquisition dates, quantities, and basis that make the comparison exact. The file is sent only to your private Finance service.</p>
+        <summary>Import a Fidelity positions or tax-lot CSV</summary>
+        <p>A Fidelity positions export updates current value and reported basis. A lot-level export also adds acquisition dates, quantities, and basis for the exact SPY comparison. Finance never guesses lots from trade history. The file is sent only to your private Finance service.</p>
         <input type="file" accept=".csv,text/csv" onChange={(event) => void previewLots(event.target.files?.[0])} />
         {lotImportStatus && <small>{lotImportStatus}</small>}
-        {lotImport && <button type="button" onClick={() => void commitLots()}>Import {lotImport.count} reviewed lots</button>}
+        {fidelityImport && <button type="button" onClick={() => void commitLots()}>Import {fidelityImport.count} reviewed {fidelityImport.label}</button>}
       </details>
       <div className="tax-explainer">
         <strong>Tax estimate boundaries</strong>
