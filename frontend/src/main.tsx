@@ -442,8 +442,14 @@ type InvestmentHolding = {
         benchmark: string;
         reason: string;
         definition: string;
-      };
+  };
 };
+type AvailableBenchmarkComparison = Extract<InvestmentHolding["benchmark_comparison"], { status: "available" }>;
+type ComparableHolding = InvestmentHolding & { benchmark_comparison: AvailableBenchmarkComparison };
+
+function hasBenchmarkComparison(holding: InvestmentHolding): holding is ComparableHolding {
+  return holding.benchmark_comparison.status === "available";
+}
 type InvestmentTaxLot = {
   linked_account_id: string | null;
   symbol: string;
@@ -1339,6 +1345,15 @@ function InvestmentOverview({ data: initialData }: { data: InvestmentResult }) {
   };
   const householdAccounts = data.account_summaries.filter((item) => item.ownership_scope === "household");
   const householdHoldings = data.holdings.filter((item) => item.ownership_scope === "household");
+  const comparableHoldings = householdHoldings.filter(hasBenchmarkComparison);
+  const unavailableComparisons = householdHoldings.length - comparableHoldings.length;
+  const comparisonBasis = comparableHoldings.reduce((sum, holding) => sum + holding.benchmark_comparison.basis_covered, 0);
+  const actualComparedValue = comparableHoldings.reduce((sum, holding) => sum + holding.benchmark_comparison.actual_covered_value, 0);
+  const spyComparedValue = comparableHoldings.reduce((sum, holding) => sum + holding.benchmark_comparison.benchmark_value, 0);
+  const comparisonDifference = actualComparedValue - spyComparedValue;
+  const actualComparedReturn = comparisonBasis ? (actualComparedValue / comparisonBasis - 1) * 100 : 0;
+  const spyComparedReturn = comparisonBasis ? (spyComparedValue / comparisonBasis - 1) * 100 : 0;
+  const comparisonMax = Math.max(actualComparedValue, spyComparedValue, 1);
   const maxAccount = Math.max(...householdAccounts.map((item) => item.market_value), 1);
   const treatment = {
     taxable: "Taxable brokerage",
@@ -1359,6 +1374,30 @@ function InvestmentOverview({ data: initialData }: { data: InvestmentResult }) {
         <article><span>Basis coverage</span><strong>{data.summary.basis_coverage_percent.toFixed(1)}%</strong><small>{money.format(data.summary.known_basis_market_value)} of current value has known basis</small></article>
       </div>
       <p className="visual-note">Basis gain is not the same as annualized performance. It does not fully account for the timing of deposits, withdrawals, dividends, or fees. Nightly valuations are now building the history needed for proper time-weighted returns.</p>
+      {comparableHoldings.length > 0 && <section className="spy-comparison" aria-labelledby="spy-comparison-heading">
+        <div className="section-title">
+          <div><p className="eyebrow">S&amp;P 500 comparison</p><h3 id="spy-comparison-heading">Did your covered holdings beat SPY?</h3></div>
+          <strong className={comparisonDifference >= 0 ? "positive" : "negative"}>{comparisonDifference >= 0 ? "Ahead " : "Behind "}{money.format(Math.abs(comparisonDifference))}</strong>
+        </div>
+        <p className="quiet">This matches each imported tax lot’s reported cost basis and acquisition date against the same dollars in dividend- and split-adjusted SPY. It is a comparison of the {comparableHoldings.length} positions with complete lots—not your whole portfolio.</p>
+        <figure className="spy-comparison-chart" aria-label={`Covered holdings returned ${actualComparedReturn.toFixed(1)} percent compared with ${spyComparedReturn.toFixed(1)} percent for SPY`}>
+          <div><span>Your covered holdings <strong>{money.format(actualComparedValue)}</strong><small>{actualComparedReturn.toFixed(1)}% since each lot’s purchase date</small></span><i><b style={{ width: `${actualComparedValue / comparisonMax * 100}%` }} /></i></div>
+          <div><span>Same dollars in SPY <strong>{money.format(spyComparedValue)}</strong><small>{spyComparedReturn.toFixed(1)}% with dividends and splits adjusted</small></span><i className="spy-bar"><b style={{ width: `${spyComparedValue / comparisonMax * 100}%` }} /></i></div>
+          <figcaption>{money.format(comparisonBasis)} across {comparableHoldings.reduce((sum, holding) => sum + holding.benchmark_comparison.covered_lots, 0)} tax lots · weekly benchmark alignment · through {new Date(`${comparableHoldings[0].benchmark_comparison.as_of}T00:00:00`).toLocaleDateString()}</figcaption>
+        </figure>
+        <div className="spy-holding-grid" aria-label="Individual holdings compared with SPY">
+          {comparableHoldings.slice().sort((left, right) => Math.abs(right.benchmark_comparison.excess_value) - Math.abs(left.benchmark_comparison.excess_value)).map((holding) => {
+            const comparison = holding.benchmark_comparison;
+            const ahead = comparison.excess_value >= 0;
+            return <article key={`${holding.account_id}-${holding.security_id}`}>
+              <span>{holding.ticker_symbol || holding.security_name || "Investment"}</span>
+              <strong className={ahead ? "positive" : "negative"}>{ahead ? "Ahead " : "Behind "}{money.format(Math.abs(comparison.excess_value))}</strong>
+              <small>{comparison.actual_return_percent?.toFixed(1)}% you · {comparison.benchmark_return_percent?.toFixed(1)}% SPY</small>
+            </article>;
+          })}
+        </div>
+        {unavailableComparisons > 0 && <p className="visual-note">{unavailableComparisons} other household positions stay out of this comparison until their Fidelity lot dates and basis are imported; Finance does not fill those gaps with guesses.</p>}
+      </section>}
       <div className="account-performance-list">
         {householdAccounts.map((account) => {
           const accountHoldings = householdHoldings
