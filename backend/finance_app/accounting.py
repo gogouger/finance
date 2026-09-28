@@ -56,6 +56,13 @@ def _transaction_dates(item: dict) -> set[date]:
 def _deduplicate_cross_source(transactions: list[dict]) -> tuple[list[dict], dict]:
     csv_rows = [item for item in transactions if item.get("source") == "capital_one_csv"]
     provider_rows = [item for item in transactions if item.get("source") != "capital_one_csv"]
+    providers_by_account_and_amount: dict[tuple[str | None, Decimal], list[dict]] = {}
+    for provider_row in provider_rows:
+        key = (
+            provider_row.get("account_id"),
+            Decimal(str(provider_row.get("amount", 0))),
+        )
+        providers_by_account_and_amount.setdefault(key, []).append(provider_row)
     used_provider_ids: set[str] = set()
     duplicate_csv_ids: set[str] = set()
     duplicate_value = Decimal("0")
@@ -64,13 +71,11 @@ def _deduplicate_cross_source(transactions: list[dict]) -> tuple[list[dict], dic
         amount = Decimal(str(csv_row.get("amount", 0)))
         candidates = []
         csv_dates = _transaction_dates(csv_row)
-        for provider_row in provider_rows:
+        for provider_row in providers_by_account_and_amount.get(
+            (csv_row.get("account_id"), amount), []
+        ):
             provider_id = provider_row["transaction_id"]
             if provider_id in used_provider_ids:
-                continue
-            if provider_row.get("account_id") != csv_row.get("account_id"):
-                continue
-            if Decimal(str(provider_row.get("amount", 0))) != amount:
                 continue
             provider_dates = _transaction_dates(provider_row)
             distance = min(
@@ -162,6 +167,13 @@ def _matched_movements(transactions: list[dict]) -> dict[str, str]:
 
 def _refund_links(transactions: list[dict]) -> dict[str, str]:
     by_id = {item["transaction_id"]: item for item in transactions}
+    purchases_by_amount_and_merchant: dict[tuple[Decimal, str], list[dict]] = {}
+    for purchase in transactions:
+        amount = Decimal(str(purchase.get("amount", 0)))
+        merchant = (purchase.get("merchant_name") or purchase.get("name") or "").strip().casefold()
+        if purchase.get("pending") or amount <= 0 or not merchant:
+            continue
+        purchases_by_amount_and_merchant.setdefault((amount, merchant), []).append(purchase)
     links: dict[str, str] = {}
     for refund in transactions:
         amount = Decimal(str(refund.get("amount", 0)))
@@ -179,16 +191,8 @@ def _refund_links(transactions: list[dict]) -> dict[str, str]:
         refund_date = date.fromisoformat(refund["date"])
         candidates = [
             purchase
-            for purchase in transactions
-            if not purchase.get("pending")
-            and Decimal(str(purchase.get("amount", 0))) == -amount
-            and (
-                purchase.get("merchant_name") or purchase.get("name") or ""
-            ).strip().casefold()
-            == merchant
-            and 0
-            <= (refund_date - date.fromisoformat(purchase["date"])).days
-            <= 90
+            for purchase in purchases_by_amount_and_merchant.get((-amount, merchant), [])
+            if 0 <= (refund_date - date.fromisoformat(purchase["date"])).days <= 90
         ]
         if len(candidates) == 1:
             links[refund["transaction_id"]] = candidates[0]["transaction_id"]
