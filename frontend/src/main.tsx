@@ -431,6 +431,9 @@ type InvestmentHolding = {
         excess_value: number;
         actual_return_percent: number | null;
         benchmark_return_percent: number | null;
+        return_basis: string;
+        cadence: string;
+        alignment: string;
         definition: string;
         limitations: string[];
       }
@@ -1391,7 +1394,7 @@ function InvestmentOverview({ data: initialData }: { data: InvestmentResult }) {
                     <div className={`holding-benchmark ${holding.benchmark_comparison.status}`}>
                       {holding.benchmark_comparison.status === "available" ? <>
                         <span><strong>{holding.benchmark_comparison.excess_value >= 0 ? "Beat" : "Trailed"} {holding.benchmark_comparison.benchmark} by {money.format(Math.abs(holding.benchmark_comparison.excess_value))}</strong><small>Same {money.format(holding.benchmark_comparison.basis_covered)} invested on the covered lot dates</small></span>
-                        <span><strong>{holding.benchmark_comparison.actual_return_percent?.toFixed(1)}% vs. {holding.benchmark_comparison.benchmark_return_percent?.toFixed(1)}%</strong><small>{holding.benchmark_comparison.covered_lots} of {holding.benchmark_comparison.total_lots} lots · through {new Date(`${holding.benchmark_comparison.as_of}T00:00:00`).toLocaleDateString()}</small></span>
+                        <span><strong>{holding.benchmark_comparison.actual_return_percent?.toFixed(1)}% vs. {holding.benchmark_comparison.benchmark_return_percent?.toFixed(1)}%</strong><small>{holding.benchmark_comparison.covered_lots} of {holding.benchmark_comparison.total_lots} lots · {holding.benchmark_comparison.cadence}-adjusted, through {new Date(`${holding.benchmark_comparison.as_of}T00:00:00`).toLocaleDateString()}</small></span>
                       </> : <><span><strong>{holding.benchmark_comparison.benchmark} comparison collecting data</strong><small>{holding.benchmark_comparison.reason}</small></span></>}
                     </div>
                     {lots.length > 0 && <details className="lot-details"><summary>{lots.length} Fidelity tax {lots.length === 1 ? "lot" : "lots"}</summary><div>{lots.map((lot) => <p key={`${lot.symbol}-${lot.acquired_date}`}><span><strong>{new Date(`${lot.acquired_date}T00:00:00`).toLocaleDateString()}</strong><small>{lot.quantity.toLocaleString()} shares</small></span><span><strong>{lot.cost_basis === null ? "Unknown basis" : money.format(lot.cost_basis)}</strong><small>{lot.cost_basis === null || !lot.quantity ? "" : `${money.format(lot.cost_basis / lot.quantity)} per share`}</small></span></p>)}</div></details>}

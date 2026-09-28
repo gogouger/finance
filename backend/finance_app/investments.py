@@ -119,10 +119,12 @@ def _holding_benchmark_comparison(
         return {
             "status": "unavailable",
             "benchmark": benchmark,
-            "reason": f"No {benchmark} total-return observations are stored.",
+            "reason": f"No {benchmark} benchmark observations are stored.",
             "definition": definition,
         }
     latest = points[-1]
+    return_basis = latest.get("return_basis", "dividend_and_split_adjusted")
+    cadence = latest.get("cadence", "daily")
     modeled = []
     for lot in usable_lots:
         purchase_points = [
@@ -170,6 +172,9 @@ def _holding_benchmark_comparison(
         "status": "available",
         "benchmark": benchmark,
         "as_of": latest["date"],
+        "return_basis": return_basis,
+        "cadence": cadence,
+        "alignment": latest.get("alignment", "on_lot_date"),
         "covered_lots": len(modeled),
         "total_lots": len(lots),
         "basis_covered": _money(covered_basis),
@@ -191,7 +196,8 @@ def _holding_benchmark_comparison(
         "definition": definition,
         "limitations": [
             "Actual value is allocated to covered lots by current share quantity.",
-            "The comparison depends on stored adjusted total-return benchmark observations and reported acquisition dates and basis.",
+            "The comparison depends on stored dividend- and split-adjusted benchmark observations and reported acquisition dates and basis.",
+            "Weekly source points use the latest weekly observation on or before each lot date; this is an intentional date-alignment approximation.",
             "Taxes, trading costs, and position-level cash distributions not reflected in current value are excluded.",
         ],
     }

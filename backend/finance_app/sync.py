@@ -7,6 +7,7 @@ from fastapi import APIRouter, Header, HTTPException, Request
 
 from .auth import require_owner
 from .assets import refresh_due_asset_valuations
+from .benchmark_provider import BenchmarkProviderUnavailable, refresh_spy_benchmark
 from .plaid_provider import PlaidProviderError
 
 
@@ -319,6 +320,16 @@ def manual_refresh(connection_id: str, request: Request) -> dict:
     return result
 
 
+@router.post("/api/private/investments/benchmarks/refresh")
+def refresh_investment_benchmark(request: Request) -> dict:
+    """Refresh the shared SPY benchmark without re-syncing any accounts."""
+    owner = require_owner(request)
+    try:
+        return refresh_spy_benchmark(request.app.state.storage, owner)
+    except BenchmarkProviderUnavailable as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+
 @router.post("/api/internal/nightly-reconcile")
 def nightly_reconcile(request: Request, x_internal_key: str | None = Header(default=None)) -> dict:
     expected = os.environ.get("FINANCE_INTERNAL_KEY")
@@ -330,12 +341,19 @@ def nightly_reconcile(request: Request, x_internal_key: str | None = Header(defa
     asset_valuations = {
         owner: refresh_due_asset_valuations(request, owner) for owner in owners
     }
+    benchmark_results = {}
+    for owner in owners:
+        try:
+            benchmark_results[owner] = refresh_spy_benchmark(request.app.state.storage, owner)
+        except BenchmarkProviderUnavailable as error:
+            benchmark_results[owner] = {"status": "unavailable", "detail": str(error)}
     raw_replies_purged = request.app.state.storage.purge_expired_email_reply_raw(
         datetime.now(UTC)
     )
     return {
         "connections": results,
         "asset_valuations": asset_valuations,
+        "benchmarks": benchmark_results,
         "raw_email_replies_purged": raw_replies_purged,
     }
 
