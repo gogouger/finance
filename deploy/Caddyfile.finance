@@ -9,11 +9,18 @@ finance.gordongouger.com {
 		path / /preview /housing /retirement /health /ready /assets/* /api/public/*
 	}
 	@finance_preview path /preview
-	header @finance_preview {
-		-X-Frame-Options
-		Content-Security-Policy "frame-ancestors 'self' https://gordongouger.com"
+	handle @finance_preview {
+		# Public Finance has no third-party runtime resources. The tighter
+		# fallback policy is intentionally limited to public routes; Plaid Link
+		# remains an authorized external connection surface in the private route.
+		header {
+			-X-Frame-Options
+			Content-Security-Policy "default-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self' https://gordongouger.com"
+		}
+		reverse_proxy finance:8080
 	}
 	handle @public {
+		header Content-Security-Policy "default-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'"
 		reverse_proxy finance:8080
 	}
 
@@ -25,6 +32,7 @@ finance.gordongouger.com {
 	}
 
 	handle {
+		header Content-Security-Policy "object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'"
 		route {
 			request_header -Remote-User
 			request_header -X-Forwarded-User
