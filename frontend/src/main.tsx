@@ -1079,7 +1079,7 @@ function NetWorthVisual({ dashboard }: { dashboard: DashboardResult }) {
   );
 }
 
-function NetWorthProjection({ dashboard }: { dashboard: DashboardResult }) {
+function NetWorthProjection({ dashboard, readiness }: { dashboard: DashboardResult; readiness: DashboardResult["retirement_readiness"] }) {
   const metrics = new Map(dashboard.metrics.map((metric) => [metric.key, metric.value]));
   const currentNetWorth = metrics.get("net_worth") || 0;
   const investedToday = metrics.get("investment_value") || 0;
@@ -1122,6 +1122,7 @@ function NetWorthProjection({ dashboard }: { dashboard: DashboardResult }) {
         <strong>{money.format(futureNetWorth)}</strong>
       </div>
       <p className="quiet">A transparent scenario—not a prediction. It compounds tracked investments, adds the savings you choose, and holds today’s home, vehicles, cash, and liabilities flat.</p>
+      {!readiness.available && <p className="projection-retirement-link">Want to model retirement taxes, early access, and the years after you stop working? <a href={readiness.action_href}>Build a retirement comparison</a>.</p>}
       <div className="projection-controls">
         <label>Years ahead <strong>{years}</strong><input aria-label="Years ahead" type="range" min="1" max="40" step="1" value={years} onChange={(event) => setYears(Number(event.target.value))} /></label>
         <label>Annual investment return <strong>{returnPercent.toFixed(1)}%</strong><input aria-label="Annual investment return" type="range" min="0" max="10" step="0.25" value={returnPercent} onChange={(event) => setReturnPercent(Number(event.target.value))} /></label>
@@ -1151,20 +1152,7 @@ function FinancialChangeStory({ dashboard }: { dashboard: DashboardResult }) {
   const operating = story.drivers.find((driver) => driver.key === "operating_surplus")?.value || 0;
   const residual = story.drivers.find((driver) => driver.key === "valuation_and_balance_change")?.value || 0;
   if (!story.available || story.opening_net_worth == null || story.change == null) {
-    return (
-      <section className="dashboard-panel financial-change-story" aria-labelledby="change-heading">
-        <div className="change-story-copy">
-          <p className="eyebrow">The first question</p>
-          <h2 id="change-heading">Are you financially stronger than one year ago?</h2>
-          <strong>Not honestly measurable yet.</strong>
-          <p>A complete opening balance is available for {story.coverage.covered} of {story.coverage.total} current household accounts and assets. The dashboard will answer this automatically once every current source has a one-year comparison point.</p>
-        </div>
-        <div className="history-progress" style={{ "--coverage": `${story.coverage.percent}%` } as React.CSSProperties}>
-          <div><span>History coverage</span><strong>{story.coverage.percent}%</strong><small>{story.coverage.covered} of {story.coverage.total} sources</small></div>
-        </div>
-        <article className="known-driver"><span>What is known now</span><strong>{money.format(operating)}</strong><p>Trailing-12-month classified income minus adjusted personal spending. This is not the same as a net-worth change.</p></article>
-      </section>
-    );
+    return null;
   }
   const opening = story.opening_net_worth;
   const afterOperating = opening + operating;
@@ -1256,7 +1244,7 @@ function RecommendationQueue({ data, saved }: { data: DashboardResult["recommend
     }
   };
   return <section className="dashboard-panel recommendation-panel">
-    <div className="section-title"><div><p className="eyebrow">Decision queue</p><h2>What is worth a look?</h2></div><span>{data.opportunities.length} open</span></div>
+    <div className="section-title"><div><p className="eyebrow">Potential savings</p><h2>Where a review may save money</h2></div><span>{data.opportunities.length} open</span></div>
     <p className="quiet">{data.method.definition}</p>
     {data.opportunities.length === 0 ? <div className="empty-signal"><strong>Nothing needs a recommendation right now</strong><p>That means no high-confidence fee, recurring-price, or sustained-spending signal is currently open.</p></div> : <div className="recommendation-list">{data.opportunities.slice(0, 5).map((item) => <article key={item.id}>
       <div><span>{item.kind.replaceAll("_", " ")}</span><strong>{item.title}</strong></div>
@@ -1565,15 +1553,6 @@ function Dashboard() {
               subscription.
             </p>
           ))}
-          <FinancialChangeStory dashboard={dashboard} />
-          <div className="dashboard-columns decision-columns">
-            <RetirementReadiness readiness={dashboard.retirement_readiness} />
-            <RecommendationQueue data={dashboard.recommendations} saved={() => {
-              void fetch("/api/private/dashboard")
-                .then((response) => response.ok ? response.json() as Promise<DashboardResult> : null)
-                .then((updated) => { if (updated) setDashboard(updated); });
-            }} />
-          </div>
           <section
             className="dashboard-metrics"
             aria-label="Financial overview"
@@ -1630,7 +1609,9 @@ function Dashboard() {
             })}
           </section>
           <NetWorthVisual dashboard={dashboard} />
-          <NetWorthProjection dashboard={dashboard} />
+          <NetWorthProjection dashboard={dashboard} readiness={dashboard.retirement_readiness} />
+          <FinancialChangeStory dashboard={dashboard} />
+          {dashboard.retirement_readiness.available && <RetirementReadiness readiness={dashboard.retirement_readiness} />}
           {investments && <InvestmentOverview data={investments} />}
           {assets?.assets.find((asset) => asset.kind === "home") && (
             <HomeOverview home={assets.assets.find((asset) => asset.kind === "home")!} />
@@ -1756,6 +1737,11 @@ function Dashboard() {
             </section>
           </div>
           <SpendingAnalytics />
+          <RecommendationQueue data={dashboard.recommendations} saved={() => {
+            void fetch("/api/private/dashboard")
+              .then((response) => response.ok ? response.json() as Promise<DashboardResult> : null)
+              .then((updated) => { if (updated) setDashboard(updated); });
+          }} />
           <section className="metric-catalog">
             <div className="section-title">
               <div>

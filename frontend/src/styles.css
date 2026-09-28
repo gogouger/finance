@@ -684,6 +684,8 @@ footer {
 .home-overview,
 .vehicle-overview { margin: 0 0 28px; }
 .net-worth-projection { margin: 0 0 28px; }
+.projection-retirement-link { margin: 14px 0 0; padding: 12px 14px; border-left: 3px solid #7eb6d8; background: rgba(126,182,216,.055); color: #9fb2a7; font-size: .74rem; line-height: 1.5; }
+.projection-retirement-link a { color: #dcebe2; font-weight: 700; }
 .projection-controls { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; margin:20px 0 12px; }
 .projection-controls label { display:grid; grid-template-columns:1fr auto; gap:8px; align-items:center; padding:12px 14px; background:rgba(131,215,173,.045); color:#9fb2a7; font-size:.7rem; }
 .projection-controls strong { color:#dcebe2; font-size:.78rem; font-variant-numeric:tabular-nums; }
