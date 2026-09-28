@@ -74,14 +74,14 @@ def test_net_worth_change_reconciles_opening_drivers_and_ending_value():
     )
 
     assert result["available"] is True
-    assert result["opening_net_worth"] == 708_000
+    assert result["opening_net_worth"] == 710_000
     assert result["ending_net_worth"] == 800_000
-    assert result["change"] == 92_000
+    assert result["change"] == 90_000
     assert result["direction"] == "stronger"
     assert result["drivers"][0]["value"] == 50_000
-    assert result["drivers"][1]["value"] == 42_000
+    assert result["drivers"][1]["value"] == 40_000
     assert result["reconciliation_difference"] == 0
-    assert result["coverage"]["covered"] == 4
+    assert result["coverage"]["covered"] == 3
     assert "Child UTMA" not in result["coverage"]["sources"]
 
 
@@ -221,7 +221,7 @@ def test_owner_sees_explainable_metrics_from_normalized_records(
 
     values = {metric["key"]: metric["value"] for metric in dashboard["metrics"]}
     assert values == {
-        "net_worth": 509800,
+        "net_worth": 510000,
         "cash": 10000,
         "debt": 100000,
         "income": 2000,
@@ -229,7 +229,7 @@ def test_owner_sees_explainable_metrics_from_normalized_records(
         "raw_spending": 402,
         "adjusted_personal_spending": 302,
         "true_monthly_cost": 0,
-        "credit_card_liabilities": 200,
+        "current_card_balance": 200,
         "investment_value": 0,
         "custodial_investment_value": 0,
         "retirement_value": 0,
@@ -264,7 +264,7 @@ def test_owner_sees_explainable_metrics_from_normalized_records(
         "context"
     ]
     assert dashboard["net_worth_change"]["available"] is False
-    assert dashboard["net_worth_change"]["ending_net_worth"] == 509800
+    assert dashboard["net_worth_change"]["ending_net_worth"] == 510000
     assert dashboard["net_worth_change"]["direction"] == "not_yet_measurable"
     assert dashboard["net_worth_change"]["drivers"][0]["value"] == 1698
     assert dashboard["net_worth_change"]["coverage"]["covered"] == 0

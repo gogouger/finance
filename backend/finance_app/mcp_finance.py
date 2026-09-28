@@ -577,11 +577,10 @@ def _summary(storage, owner: str) -> dict:
     registered_asset_debt = sum(
         float(item["ownership"]["debt_balance"]) for item in assets
     )
-    liabilities = current_card_balance + registered_asset_debt
     return {
         "currency": "USD",
         "metrics": {
-            "net_worth": round(cash + investments + asset_value - liabilities, 2),
+            "net_worth": round(cash + investments + asset_value - registered_asset_debt, 2),
             "cash": round(cash, 2),
             "current_card_balance": round(current_card_balance, 2),
             "registered_asset_debt": round(registered_asset_debt, 2),
@@ -691,7 +690,7 @@ def _execute_tool(storage, owner: str, payload: ToolCall) -> tuple[dict, str, di
     if payload.tool == "finance.metric_definitions":
         return {
             "metrics": {
-                "net_worth": "Known assets minus registered asset debt and the current card-balance snapshot.",
+                "net_worth": "Known assets minus registered asset debt. The temporary current card amount due is shown separately.",
                 "cash": "Latest connected depository balances.",
                 "current_card_balance": "A transient provider-reported snapshot, not long-term debt.",
                 "registered_asset_debt": "Debt explicitly registered against a home or vehicle.",

@@ -1039,9 +1039,10 @@ function NetWorthVisual({ dashboard }: { dashboard: DashboardResult }) {
     { label: "Investments", value: values.get("investment_value") || 0, color: "#f4c86a" },
     { label: "Cash", value: values.get("cash") || 0, color: "#7eb6d8" },
   ];
-  const liabilities = (values.get("debt") || 0) + (values.get("credit_card_liabilities") || 0);
+  const structuralDebt = values.get("debt") || 0;
+  const currentCardBalance = values.get("current_card_balance") || 0;
   const gross = parts.reduce((total, item) => total + item.value, 0);
-  const net = values.get("net_worth") || gross - liabilities;
+  const net = values.get("net_worth") || gross - structuralDebt;
   const max = Math.max(gross, 1);
   const gradient = parts
     .reduce<{ stops: string[]; cursor: number }>((result, item) => {
@@ -1054,12 +1055,12 @@ function NetWorthVisual({ dashboard }: { dashboard: DashboardResult }) {
   return (
     <section className="wealth-story dashboard-panel" aria-labelledby="wealth-heading">
       <div className="section-title">
-        <div><p className="eyebrow">Net worth, visually</p><h2 id="wealth-heading">What you own, minus what you owe</h2></div>
+        <div><p className="eyebrow">Long-term net worth, visually</p><h2 id="wealth-heading">What you own, less asset-backed debt</h2></div>
         <strong>{money.format(net)}</strong>
       </div>
       <div className="wealth-layout">
         <div className="wealth-ring" style={{ background: `conic-gradient(${gradient})` }}>
-          <div><span>Net worth</span><strong>{money.format(net)}</strong><small>{money.format(liabilities)} liabilities</small></div>
+          <div><span>Long-term net worth</span><strong>{money.format(net)}</strong><small>{money.format(structuralDebt)} asset-backed debt</small></div>
         </div>
         <div className="wealth-breakdown">
           {parts.map((part) => (
@@ -1069,7 +1070,8 @@ function NetWorthVisual({ dashboard }: { dashboard: DashboardResult }) {
               <strong>{money.format(part.value)}</strong>
             </div>
           ))}
-          <div className="liability-row"><i /><span>Liabilities<small>Card snapshot + registered asset debt</small></span><strong>−{money.format(liabilities)}</strong></div>
+          <div className="liability-row"><i /><span>Asset-backed debt<small>Registered mortgage and vehicle debt only</small></span><strong>−{money.format(structuralDebt)}</strong></div>
+          <div className="card-balance-row"><i /><span>Current card amount due<small>Temporary bill for cash planning; excluded from long-term net worth</small></span><strong>{money.format(currentCardBalance)}</strong></div>
         </div>
       </div>
       <p className="visual-note">Children’s custodial investments are intentionally outside this household total.</p>
@@ -1523,7 +1525,7 @@ function Dashboard() {
     "cash",
     "investment_value",
     "true_monthly_cost",
-    "credit_card_liabilities",
+    "current_card_balance",
   ];
   return (
     <main>

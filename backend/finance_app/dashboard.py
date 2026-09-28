@@ -220,13 +220,12 @@ def _net_worth_attribution(
 ) -> dict:
     opening_cash = 0.0
     opening_investments = 0.0
-    opening_cards = 0.0
     expected = 0
     covered = 0
     sources = []
     for key, account in account_by_key.items():
         account_type = account.get("type")
-        if account_type not in {"depository", "credit", "investment"}:
+        if account_type not in {"depository", "investment"}:
             continue
         if account_type == "investment" and is_custodial_account(account):
             continue
@@ -246,8 +245,6 @@ def _net_worth_attribution(
         sources.append(account.get("name") or key.split(":", 1)[-1])
         if account_type == "depository":
             opening_cash += value
-        elif account_type == "credit":
-            opening_cards += max(value, 0)
         else:
             opening_investments += value
 
@@ -276,7 +273,6 @@ def _net_worth_attribution(
         opening_cash
         + opening_investments
         + opening_assets
-        - opening_cards
         - opening_asset_debt
     )
     change = ending_net_worth - opening_net_worth
@@ -436,7 +432,7 @@ def financial_dashboard(request: Request) -> dict:
         row for row in all_investment_rows if not is_custodial_account(row[0])
     ]
     cash = sum(float(balance.get("current") or 0) for _, balance in cash_rows)
-    credit_debt = sum(max(0, float(balance.get("current") or 0)) for _, balance in credit_rows)
+    current_card_balance = sum(max(0, float(balance.get("current") or 0)) for _, balance in credit_rows)
     investment_value = sum(float(balance.get("current") or 0) for _, balance in investment_rows)
     custodial_investment_value = sum(
         float(balance.get("current") or 0)
@@ -472,7 +468,6 @@ def financial_dashboard(request: Request) -> dict:
         + investment_value
         + household_asset_value
         - asset_debt
-        - credit_debt
     )
     monthly_factors = {"monthly": 1, "quarterly": 1 / 3, "annual": 1 / 12}
     true_monthly_cost = sum(
@@ -500,15 +495,15 @@ def financial_dashboard(request: Request) -> dict:
     ]
 
     metrics = [
-        _metric("net_worth", "Net worth", net_worth, "Cash, household investments, and registered household assets minus current card balances and registered asset debt.", inclusions=["latest depository balances", "latest household investment balances", "registered home and vehicle values", "current credit-card balances", "registered asset debt"], exclusions=["children's custodial accounts (UTMA/UGMA)", "selling costs", "unregistered assets", "unavailable loan liabilities"], timestamps=[*balance_times, *asset_times], gaps=liability_gap, confidence="medium", rationale="Children's custodial investments are tracked separately; card balances are included only as a point-in-time liability.", covered=len(balances) + len(assets), total=len(accounts) + len(assets), sources=balance_sources),
+        _metric("net_worth", "Long-term net worth", net_worth, "Cash, household investments, and registered household assets minus registered asset debt. The current card bill is shown separately rather than treated as debt.", inclusions=["latest depository balances", "latest household investment balances", "registered home and vehicle values", "registered asset debt"], exclusions=["current credit-card amount due", "children's custodial accounts (UTMA/UGMA)", "selling costs", "unregistered assets", "unavailable loan liabilities"], timestamps=[*balance_times, *asset_times], gaps=liability_gap, confidence="medium", rationale="This long-term view keeps a monthly card-clearing amount separate from structural, asset-backed debt.", covered=len(balances) + len(assets), total=len(accounts) + len(assets), sources=balance_sources),
         _metric("cash", "Cash", cash, "Latest current balances for connected depository accounts.", inclusions=["checking", "savings", "other depository accounts"], exclusions=["credit available", "investment cash inside brokerage accounts"], timestamps=[balance.get("observed_at", "") for _, balance in cash_rows], gaps=[] if cash_rows else ["No connected depository balances are available."], confidence="high" if cash_rows else "low", rationale="Computed from latest USD provider balance observations.", covered=len(cash_rows), total=len([item for item in accounts if item.get("type") == "depository"]), sources=transaction_sources),
-        _metric("debt", "Registered asset debt", asset_debt, "Debt explicitly registered against household assets, kept separate from transient credit-card balances.", inclusions=["registered mortgage and vehicle debt"], exclusions=["current credit-card balances", "unavailable student, personal, and other provider loan liabilities"], timestamps=asset_times, gaps=liability_gap, confidence="medium", rationale="This is structural debt attached to registered assets; current card balances appear as a separate snapshot metric.", covered=len([item for item in assets if item["ownership"]["debt_balance"] > 0]), total=max(1, len(assets)), sources=[item["valuation"]["source_label"] for item in assets]),
+        _metric("debt", "Registered asset debt", asset_debt, "Debt explicitly registered against household assets.", inclusions=["registered mortgage and vehicle debt"], exclusions=["current credit-card amount due", "unavailable student, personal, and other provider loan liabilities"], timestamps=asset_times, gaps=liability_gap, confidence="medium", rationale="This is structural debt attached to registered assets; monthly card amounts are separate cash-flow information.", covered=len([item for item in assets if item["ownership"]["debt_balance"] > 0]), total=max(1, len(assets)), sources=[item["valuation"]["source_label"] for item in assets]),
         _metric("income", "Income · trailing 12 months", accounting_metrics["income"], "Posted transaction inflows classified as income during the trailing 12 calendar months.", inclusions=["posted income transactions in the reporting period"], exclusions=["older history", "transfers", "refunds", "pending income", "unconnected payroll history"], timestamps=transaction_times, gaps=[], confidence="medium", rationale="Provider transaction categories are used until the owner reviews classifications.", covered=len(transaction_sources), total=len(transaction_sources), sources=transaction_sources),
         _metric("raw_cash_flow", "Observed bank movement · trailing 12 months", accounting_metrics["cash_flow"]["net"], "Credits minus debits observed on connected bank accounts; this is not household profit or loss.", inclusions=["posted depository credits", "posted depository debits", "bank-side investment transfers and card payments"], exclusions=["investment returns", "changes in brokerage value", "credit-card purchases", "older history", "pending transactions"], timestamps=transaction_times, gaps=[] if cash_rows else ["No connected depository account is available, so bank movement is not measurable yet."], confidence="high" if cash_rows else "low", rationale="A bank debit can move value to a brokerage or pay a card rather than reduce household net worth. The movement bridge separates those uses.", covered=len(cash_rows), total=max(1, len([item for item in accounts if item.get("type") == "depository"])), sources=transaction_sources),
         _metric("raw_spending", "Raw spending · trailing 12 months", accounting_metrics["finalized_spending"]["raw"], "Posted purchase outflows during the trailing 12 calendar months before refunds or owner adjustments.", inclusions=["posted purchases in the reporting period"], exclusions=["older history", "income", "transfers", "credit-card payments", "pending transactions", "refund offsets"], timestamps=transaction_times, gaps=[], confidence="high", rationale="Deterministic accounting rules separate purchases from non-spending movements.", covered=len(transaction_sources), total=len(transaction_sources), sources=transaction_sources),
         _metric("adjusted_personal_spending", "Personal spending · trailing 12 months", accounting_metrics["finalized_spending"]["adjusted"], "Posted personal purchase spending during the trailing 12 calendar months after refunds and owner adjustments.", inclusions=["posted personal purchases", "linked refunds", "owner-confirmed personal shares"], exclusions=["older history", "transfers", "card payments", "pending purchases", "reimbursable, business, and excluded shares"], timestamps=transaction_times, gaps=[], confidence="high", rationale="Uses normalized accounting plus explicit owner adjustments; unreviewed provider categories remain visible separately.", covered=len(transaction_sources), total=len(transaction_sources), sources=transaction_sources),
         _metric("true_monthly_cost", "True monthly cost", true_monthly_cost, "Monthly equivalent of owner-confirmed recurring, quarterly, and annual obligations.", inclusions=["confirmed recurring obligations"], exclusions=["unconfirmed recurring proposals", "one-off spending"], timestamps=[item.get("updated_at", "") for item in obligations], gaps=missing_recurring, confidence="high" if obligations else "low", rationale="Only owner-confirmed obligations affect this metric.", covered=len(obligations), total=max(1, len(obligations)), sources=["confirmed recurring-cost records"] if obligations else []),
-        _metric("credit_card_liabilities", "Current card balance", credit_debt, "Latest provider-reported credit-card balance—a transient point-in-time amount, not long-term debt.", inclusions=["connected credit-card current balances"], exclusions=["available credit", "pending charges", "unconnected cards", "mortgage and other structural debt"], timestamps=[balance.get("observed_at", "") for _, balance in credit_rows], gaps=[] if credit_rows else ["No connected credit-card balance is available."], confidence="high" if credit_rows else "low", rationale="This changes as charges post and payments settle; it is shown as a current liability snapshot.", covered=len(credit_rows), total=len([item for item in accounts if item.get("type") == "credit"]), sources=transaction_sources),
+        _metric("current_card_balance", "Current card amount due", current_card_balance, "Latest provider-reported credit-card balance—a temporary bill to settle, not household debt.", inclusions=["connected credit-card current balances"], exclusions=["long-term net worth", "structural debt", "available credit", "pending charges", "unconnected cards"], timestamps=[balance.get("observed_at", "") for _, balance in credit_rows], gaps=[] if credit_rows else ["No connected credit-card balance is available."], confidence="high" if credit_rows else "low", rationale="This changes as charges post and payments settle. It remains visible for cash planning but does not reduce the long-term net-worth total.", covered=len(credit_rows), total=len([item for item in accounts if item.get("type") == "credit"]), sources=transaction_sources),
         _metric("investment_value", "Household investment value", investment_value, "Latest connected investment balances belonging to the household, falling back to normalized holdings when balances are absent.", inclusions=["household brokerage and retirement investment accounts"], exclusions=["children's custodial accounts (UTMA/UGMA)", "unconnected accounts", "cost basis as a substitute for market value"], timestamps=[balance.get("observed_at", "") for _, balance in investment_rows], gaps=[] if investment_rows or holdings else ["No household investment balances or holdings are available."], confidence="high" if investment_rows else ("medium" if holdings else "low"), rationale="Uses provider market values without treating children's assets as the owner's assets.", covered=len(investment_rows) or len(holdings), total=max(len(all_investment_rows), len(holdings), 1), sources=transaction_sources),
         _metric("custodial_investment_value", "Children's custodial investments", custodial_investment_value, "Latest connected UTMA and UGMA balances, shown separately because the assets belong to their child beneficiaries.", inclusions=["UTMA accounts", "UGMA accounts"], exclusions=["household net worth", "household investment value", "retirement value"], timestamps=[balance.get("observed_at", "") for _, balance in custodial_investment_rows], gaps=[] if custodial_investment_rows else ["No connected custodial investment account is available."], confidence="high" if custodial_investment_rows else "low", rationale="Account subtype and name identify custodial ownership; the records remain visible without inflating household totals.", covered=len(custodial_investment_rows), total=max(len(custodial_investment_rows), 1), sources=transaction_sources),
         _metric("retirement_value", "Retirement value", retirement_value, "Latest balances for household investment accounts explicitly identified as retirement accounts.", inclusions=["401(k), 403(b), IRA, Roth, pension, and retirement subtypes"], exclusions=["children's custodial accounts (UTMA/UGMA)", "taxable brokerage accounts", "unidentified investment accounts"], timestamps=[balance.get("observed_at", "") for _, balance in retirement_rows], gaps=[] if retirement_rows else ["No connected household account is explicitly identified as a retirement account."], confidence="high" if retirement_rows else "low", rationale="No custodial or ambiguous account is guessed to be the owner's retirement asset.", covered=len(retirement_rows), total=max(len(investment_rows), 1), sources=transaction_sources),

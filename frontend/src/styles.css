@@ -717,6 +717,8 @@ footer {
 .wealth-breakdown strong { font-variant-numeric: tabular-nums; }
 .wealth-breakdown .liability-row i { background: #e6ad9c; }
 .wealth-breakdown .liability-row strong { color: #e6ad9c; }
+.wealth-breakdown .card-balance-row i { background: #f4c86a; }
+.wealth-breakdown .card-balance-row strong { color: #f4c86a; }
 .visual-note { margin: 18px 0 0; color: #9fb2a7; font-size: .76rem; line-height: 1.55; }
 .investment-summary-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; margin-top: 24px; }
 .investment-summary-grid article { padding: 17px; border: 1px solid rgba(231,245,235,.1); background: rgba(7,19,15,.35); }
