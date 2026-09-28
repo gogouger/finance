@@ -17,6 +17,66 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
+def _reported_tax_lots(
+    holding: dict, security: dict, timestamp: str
+) -> list[tuple[str, dict]]:
+    """Normalize institution-reported lots without inferring them from trades.
+
+    `tax_lots` is optional in Plaid's holdings response.  An empty array means
+    the connected institution did not furnish lots, which is materially
+    different from a position with no acquisition history.
+    """
+    lots: list[tuple[str, dict]] = []
+    for ordinal, lot in enumerate(holding.get("tax_lots") or []):
+        acquired_at = lot.get("original_purchase_datetime")
+        acquired_date = str(acquired_at)[:10] if acquired_at else None
+        lot_identity = lot.get("institution_lot_id") or hashlib.sha256(
+            json.dumps(
+                {
+                    "account_id": holding.get("account_id"),
+                    "security_id": holding.get("security_id"),
+                    "acquired_at": acquired_at,
+                    "quantity": lot.get("quantity"),
+                    "cost_basis": lot.get("cost_basis"),
+                    "ordinal": ordinal,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()
+        source_id = (
+            f"{holding['account_id']}:{holding['security_id']}:{lot_identity}"
+        )
+        cost_basis = lot.get("cost_basis")
+        lots.append(
+            (
+                source_id,
+                {
+                    "account_id": holding["account_id"],
+                    "security_id": holding["security_id"],
+                    "symbol": security.get("ticker_symbol")
+                    or holding["security_id"],
+                    "description": security.get("name"),
+                    "quantity": lot.get("quantity"),
+                    "cost_basis": cost_basis,
+                    "cost_basis_status": (
+                        "reported" if cost_basis is not None else "unknown"
+                    ),
+                    "acquired_date": acquired_date,
+                    "effective_date": timestamp[:10],
+                    "purchase_price": lot.get("purchase_price"),
+                    "current_value": lot.get("current_value"),
+                    "position_type": lot.get("position_type"),
+                    "institution_lot_id": lot.get("institution_lot_id"),
+                    "source_lot_id": source_id,
+                    "currency": holding.get("iso_currency_code"),
+                    "source": "plaid_reported_tax_lot",
+                },
+            )
+        )
+    return lots
+
+
 def sync_connection(request: Request, connection: dict) -> dict:
     storage = request.app.state.storage
     provider = request.app.state.plaid
@@ -95,6 +155,12 @@ def sync_connection(request: Request, connection: dict) -> dict:
     investment_counts: dict[str, int] = {}
     if "investments" in connection.get("products", []):
         investments = provider.investments_holdings_get(connection["access_token"])
+        securities_by_id = {
+            security["security_id"]
+            : security
+            for security in investments.get("securities", [])
+            if security.get("security_id")
+        }
         for security in investments.get("securities", []):
             if security.get("iso_currency_code") == "USD":
                 storage.upsert_financial_record(
@@ -104,6 +170,7 @@ def sync_connection(request: Request, connection: dict) -> dict:
                     security["security_id"],
                     security,
                 )
+        reported_lot_ids: set[str] = set()
         for holding in investments.get("holdings", []):
             if holding.get("iso_currency_code") == "USD":
                 if holding.get("cost_basis") is None:
@@ -129,6 +196,36 @@ def sync_connection(request: Request, connection: dict) -> dict:
                     "holding",
                     f"{holding['account_id']}:{holding['security_id']}",
                     normalized_holding,
+                )
+                security = securities_by_id.get(holding["security_id"], {})
+                for source_id, lot in _reported_tax_lots(
+                    holding, security, timestamp
+                ):
+                    reported_lot_ids.add(source_id)
+                    storage.upsert_financial_record(
+                        owner,
+                        connection_id,
+                        "tax_lot",
+                        source_id,
+                        {**lot, "connection_id": connection_id},
+                    )
+        # A provider snapshot is authoritative for its own tax-lot records.
+        # Do not touch manually imported Fidelity lots, which are stored under
+        # a separate import connection and may fill an institution coverage gap.
+        for existing_lot in storage.list_financial_records(owner, "tax_lot"):
+            if (
+                not existing_lot.get("removed")
+                and existing_lot.get("connection_id") == connection_id
+                and existing_lot.get("source") == "plaid_reported_tax_lot"
+                and existing_lot.get("source_lot_id") not in reported_lot_ids
+            ):
+                storage.upsert_financial_record(
+                    owner,
+                    connection_id,
+                    "tax_lot",
+                    existing_lot["source_lot_id"],
+                    existing_lot,
+                    removed=True,
                 )
         valuations = investments.get("valuation_history") or []
         if not valuations:
@@ -190,6 +287,13 @@ def sync_connection(request: Request, connection: dict) -> dict:
             "securities": len(storage.list_financial_records(owner, "security")),
             "investment_activities": len(
                 storage.list_financial_records(owner, "investment_activity")
+            ),
+            "tax_lots": len(
+                [
+                    item
+                    for item in storage.list_financial_records(owner, "tax_lot")
+                    if not item["removed"]
+                ]
             ),
         }
 

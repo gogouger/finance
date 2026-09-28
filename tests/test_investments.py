@@ -15,6 +15,7 @@ from backend.finance_app.investments import (
     _holding_benchmark_comparison,
     _tax_treatment,
 )
+from backend.finance_app.sync import _reported_tax_lots
 
 
 def _unused_port() -> int:
@@ -162,6 +163,53 @@ def test_holding_benchmark_refuses_to_guess_without_lot_history():
 
     assert comparison["status"] == "unavailable"
     assert "acquisition dates" in comparison["reason"]
+
+
+def test_reported_tax_lots_preserve_exact_institution_fields():
+    lots = _reported_tax_lots(
+        {
+            "account_id": "account-1",
+            "security_id": "security-1",
+            "iso_currency_code": "USD",
+            "tax_lots": [
+                {
+                    "institution_lot_id": "lot-9",
+                    "original_purchase_datetime": "2022-03-14T00:00:00Z",
+                    "quantity": 2.5,
+                    "purchase_price": 100,
+                    "cost_basis": 250,
+                    "current_value": 350,
+                    "position_type": "LONG",
+                }
+            ],
+        },
+        {"ticker_symbol": "EXACT", "name": "Exact Fund"},
+        "2026-09-27T12:00:00+00:00",
+    )
+
+    assert lots == [
+        (
+            "account-1:security-1:lot-9",
+            {
+                "account_id": "account-1",
+                "security_id": "security-1",
+                "symbol": "EXACT",
+                "description": "Exact Fund",
+                "quantity": 2.5,
+                "cost_basis": 250,
+                "cost_basis_status": "reported",
+                "acquired_date": "2022-03-14",
+                "effective_date": "2026-09-27",
+                "purchase_price": 100,
+                "current_value": 350,
+                "position_type": "LONG",
+                "institution_lot_id": "lot-9",
+                "source_lot_id": "account-1:security-1:lot-9",
+                "currency": "USD",
+                "source": "plaid_reported_tax_lot",
+            },
+        )
+    ]
 
 
 def test_investment_sync_is_idempotent_and_never_invents_cost_basis(

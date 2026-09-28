@@ -1382,8 +1382,8 @@ function InvestmentOverview({ data: initialData }: { data: InvestmentResult }) {
         })}
       </div>
       <details className="lot-import">
-        <summary>Import Fidelity tax lots</summary>
-        <p>Plaid currently provides aggregate position basis, not the individual remaining lots. Upload a Fidelity CSV export to add acquisition dates, quantities, and basis by lot. The file is sent only to your private Finance service.</p>
+        <summary>Add exact Fidelity tax lots for the SPY comparison</summary>
+        <p>The connected Fidelity account currently supplies position-level basis, but no remaining-lot records. Finance never guesses lots from trade history. Upload Fidelity’s lot-level CSV to add the acquisition dates, quantities, and basis that make the comparison exact. The file is sent only to your private Finance service.</p>
         <input type="file" accept=".csv,text/csv" onChange={(event) => void previewLots(event.target.files?.[0])} />
         {lotImportStatus && <small>{lotImportStatus}</small>}
         {lotImport && <button type="button" onClick={() => void commitLots()}>Import {lotImport.count} reviewed lots</button>}

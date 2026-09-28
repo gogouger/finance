@@ -293,6 +293,27 @@ account-brokerage,BOND,Example Bond Fund,4,320.00,2024-02-01,2026-09-20
     assert json.load(rejected.value)["detail"] == "duplicate logical record at row 3"
 
 
+def test_fidelity_preview_allows_distinct_lots_acquired_on_the_same_day(
+    running_service: str,
+):
+    content = """Account Number,Symbol,Description,Quantity,Cost Basis Total,Date Acquired,As Of Date
+account-brokerage,BOND,Example Bond Fund,4,320.00,2024-02-01,2026-09-20
+account-brokerage,BOND,Example Bond Fund,3,255.00,2024-02-01,2026-09-20
+"""
+
+    with urllib.request.urlopen(
+        _request(
+            f"{running_service}/api/private/investments/imports/fidelity/preview",
+            {"content": content},
+            method="POST",
+        )
+    ) as response:
+        preview = json.load(response)
+
+    assert preview["valid"] is True
+    assert preview["counts"]["tax_lots"] == 2
+
+
 def test_plaid_holding_wins_when_import_is_equally_current_and_complete(
     running_service: str,
 ):

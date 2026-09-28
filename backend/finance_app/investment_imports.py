@@ -83,7 +83,7 @@ def _rows(content: str, required: set[str]) -> list[dict[str, str]]:
 
 def parse_fidelity(content: str) -> list[dict]:
     records = []
-    identities: set[tuple[str, str, str]] = set()
+    identities: set[tuple[str, str, str, float, float | None]] = set()
     for row_number, row in enumerate(_rows(content, FIDELITY_COLUMNS), start=2):
         account_id = row["Account Number"].strip()
         symbol = row["Symbol"].strip().upper()
@@ -96,7 +96,8 @@ def parse_fidelity(content: str) -> list[dict]:
             row["Cost Basis Total"], "Cost Basis Total", row_number, optional=True
         )
         acquired_date = _date(row["Date Acquired"], "Date Acquired", row_number)
-        identity = (account_id, symbol, acquired_date)
+        quantity = _number(row["Quantity"], "Quantity", row_number)
+        identity = (account_id, symbol, acquired_date, quantity, cost_basis)
         if identity in identities:
             raise ValueError(f"duplicate logical record at row {row_number}")
         identities.add(identity)
@@ -106,7 +107,7 @@ def parse_fidelity(content: str) -> list[dict]:
                 "account_id": account_id,
                 "symbol": symbol,
                 "description": description,
-                "quantity": _number(row["Quantity"], "Quantity", row_number),
+                "quantity": quantity,
                 "cost_basis": cost_basis,
                 "cost_basis_status": (
                     "reported" if cost_basis is not None else "unknown"
@@ -208,7 +209,7 @@ def _fingerprint(value: object) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _record_identity(provider: str, record: dict) -> str:
+def _record_identity(provider: str, record: dict, *, lot_ordinal: int = 0) -> str:
     if record["kind"] == "tax_lot":
         identity = {
             "provider": provider,
@@ -216,6 +217,10 @@ def _record_identity(provider: str, record: dict) -> str:
             "account_id": record["account_id"],
             "symbol": record["symbol"],
             "acquired_date": record["acquired_date"],
+            # Fidelity can report more than one remaining lot for the same
+            # symbol on the same day. The ordinal preserves those lots while
+            # still allowing a later export to fill in an unknown basis.
+            "lot_ordinal": lot_ordinal,
         }
     elif record["kind"] == "holding":
         identity = {
@@ -250,8 +255,18 @@ def _commit(request: Request, owner: str, provider: str, records: list[dict]) ->
     }
     created = 0
     unchanged = 0
+    lot_ordinals: dict[tuple[str, str, str], int] = {}
     for record in records:
-        record_id = _record_identity(provider, record)
+        lot_ordinal = 0
+        if record["kind"] == "tax_lot":
+            lot_key = (
+                record["account_id"],
+                record["symbol"],
+                record["acquired_date"],
+            )
+            lot_ordinal = lot_ordinals.get(lot_key, 0)
+            lot_ordinals[lot_key] = lot_ordinal + 1
+        record_id = _record_identity(provider, record, lot_ordinal=lot_ordinal)
         stored = {
             **record,
             "import_record_id": record_id,
