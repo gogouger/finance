@@ -13,6 +13,13 @@ const projectPages = [
   ["https://gordongouger.com/14ers.html", "14er"],
 ] as const;
 
+const mainSiteProjectPages = [
+  ["https://gordongouger.com/athletic-analytics.html", "Athletic Analytics"],
+  ["https://gordongouger.com/library.html", "Favorite shelf"],
+  ["https://gordongouger.com/finance.html", "Finance"],
+  ["https://gordongouger.com/14ers.html", "Statewide summit terrain"],
+] as const;
+
 async function assertNoPageOverflow(page: import("@playwright/test").Page) {
   const widths = await page.evaluate(() => ({
     viewport: document.documentElement.clientWidth,
@@ -46,6 +53,15 @@ test("public Finance routes keep an explicit same-origin CSP fallback", async ({
 
 for (const [url, headingFragment] of projectPages) {
   test(`Public project surface is usable on a phone: ${url}`, async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(url, { waitUntil: "networkidle" });
+    await expect(page.locator("body")).toContainText(new RegExp(headingFragment, "i"));
+    await assertNoPageOverflow(page);
+  });
+}
+
+for (const [url, headingFragment] of mainSiteProjectPages) {
+  test(`Main-site project preview stays usable on a phone: ${url}`, async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(url, { waitUntil: "networkidle" });
     await expect(page.locator("body")).toContainText(new RegExp(headingFragment, "i"));
