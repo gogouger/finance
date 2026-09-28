@@ -77,3 +77,28 @@ test("Athletic preview keeps an honest sample story when live telemetry is unava
   await expect(page.getByRole("link", { name: /Open Athletic Analytics/ }).first()).toBeVisible();
   await assertNoPageOverflow(page);
 });
+
+test("project headers share the portfolio hub and owner-auth handoff", async ({ page }) => {
+  for (const url of [
+    "https://finance.gordongouger.com/preview",
+    "https://library.gordongouger.com/ggouger/",
+    "https://athletic-analytics.gordongouger.com/",
+    "https://14ers.gordongouger.com/",
+  ]) {
+    await page.goto(url, { waitUntil: "networkidle" });
+    await expect(page.getByRole("link", { name: /all projects/i }).first()).toHaveAttribute(
+      "href",
+      "https://gordongouger.com/projects.html",
+    );
+  }
+
+  await page.goto("https://14ers.gordongouger.com/", { waitUntil: "networkidle" });
+  await page.getByRole("button", { name: /owner sign in/i }).click();
+  await page.waitForURL(/auth\.gordongouger\.com/);
+
+  const athleticsLogin = await page.request.get("https://athletic-analytics.gordongouger.com/login", {
+    maxRedirects: 0,
+  });
+  expect(athleticsLogin.status()).toBe(302);
+  expect(athleticsLogin.headers()["location"]).toMatch(/^https:\/\/auth\.gordongouger\.com\//);
+});
