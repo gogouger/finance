@@ -35,6 +35,15 @@ for (const [path, heading] of financePages) {
   });
 }
 
+test("public Finance routes keep an explicit same-origin CSP fallback", async ({ page }) => {
+  for (const [path] of financePages) {
+    const response = await page.goto(`${path}?security-regression=1`, { waitUntil: "networkidle" });
+    const policy = response?.headers()["content-security-policy"] || "";
+    expect(policy).toContain("default-src 'self'");
+    expect(policy).toContain("object-src 'none'");
+  }
+});
+
 for (const [url, headingFragment] of projectPages) {
   test(`Public project surface is usable on a phone: ${url}`, async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
