@@ -5,8 +5,15 @@ finance.gordongouger.com {
 	import security_headers
 	encode gzip
 
-	@public {
-		path / /preview /housing /retirement /health /ready /assets/* /api/public/*
+	@finance_public {
+		# Keep this browser subrequest public so an in-flight OAuth callback does
+		# not have its state cookie overwritten by a second authorization flow.
+		path / /favicon.ico /preview /housing /retirement /health /ready /assets/* /api/public/*
+	}
+	# MCP is OAuth-protected by the Finance resource server itself, not the
+	# browser-only OIDC bridge. Keep this list aligned with infra/Caddyfile.
+	@mcp_protocol {
+		path /mcp /mcp/oauth/token /mcp/oauth/register /.well-known/oauth-authorization-server /.well-known/oauth-protected-resource/mcp
 	}
 	@finance_preview path /preview
 	handle @finance_preview {
@@ -19,8 +26,11 @@ finance.gordongouger.com {
 		}
 		reverse_proxy finance:8080
 	}
-	handle @public {
+	handle @finance_public {
 		header Content-Security-Policy "default-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'"
+		reverse_proxy finance:8080
+	}
+	handle @mcp_protocol {
 		reverse_proxy finance:8080
 	}
 
@@ -41,7 +51,7 @@ finance.gordongouger.com {
 			request_header -X-Auth-Require-Fresh
 
 			@fresh {
-				path /api/private/security/fresh-check /api/private/lifecycle/* /api/private/mcp/grants* /api/private/payroll/approval /api/private/payroll/link-token /api/private/payroll/manual /api/private/payroll/ingest /api/private/investments/imports/*
+				path /api/private/security/fresh-check /api/private/lifecycle/* /api/private/mcp/grants* /mcp/oauth/authorize /api/private/payroll/approval /api/private/payroll/link-token /api/private/payroll/manual /api/private/payroll/ingest /api/private/investments/imports/*
 			}
 			request_header @fresh X-Auth-Require-Fresh true
 			@fresh_connection_post {
