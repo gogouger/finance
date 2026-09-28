@@ -32,7 +32,8 @@ Production linking remains disabled until the live deployment owner changes `sta
 - `OWASP-REVIEW.md` covers all OWASP Top 10:2025 categories at each trust boundary and records no unresolved high-risk finding.
 - Python dependency audit: 0 known vulnerabilities after upgrading `cryptography` to 50.0.1. Frontend production dependency audit: 0 known vulnerabilities.
 - Gitleaks 8.30.1 scanned tracked and unignored source with redaction enabled on 2026-09-25: 0 findings. Scan reports must never contain recovered credential values.
-- `zap-staging.sh` refuses non-local targets. ZAP 2.17.0 active-scanned only the isolated loopback staging service on 2026-09-25: 0 high, 2 medium, 1 low, and 2 informational alerts. The medium header alerts occur only when bypassing the Caddy security-header boundary and must be rechecked through the staging proxy before approval. Never point ZAP at production or an unrelated service.
+- `zap-staging.sh` refuses non-local targets. ZAP 2.17.0 active-scanned only the isolated loopback staging service on 2026-09-25: 0 high, 2 medium, 1 low, and 2 informational alerts. The medium header alerts occur only when bypassing the Caddy security-header boundary.
+- A separate 2026-09-28 passive ZAP baseline checked only the anonymous Finance preview through the public edge: 0 failures and 61 passes. It performed no active attacks, authentication, or private-route access. Its CSP fallback finding was fixed and is now asserted by the production browser suite. Do not run an active ZAP scan against production without a new, explicitly scoped approval.
 
 ## Approval record
 
