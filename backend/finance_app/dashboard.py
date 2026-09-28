@@ -238,6 +238,53 @@ def _billing_alerts(transactions: list[dict], accounts: list[dict]) -> list[dict
     return sorted(alerts, key=lambda item: item.get("date") or "", reverse=True)
 
 
+def _dashboard_insights(
+    storage,
+    owner: str,
+    transactions: list[dict],
+    accounts: list[dict],
+    balance_history: dict[str, list[dict]],
+    classifications: dict[str, dict],
+    credit_account_ids: set[str],
+    obligations: list[dict],
+    *,
+    as_of: date,
+) -> dict:
+    """Build the history-wide review signals separately from dashboard headlines."""
+    full_accounting = build_accounting_view(
+        transactions,
+        storage.list_transaction_adjustments(owner),
+        storage.list_provider_record_versions(owner, "transaction"),
+        classifications,
+        credit_account_ids,
+    )
+    return {
+        "recommendations": build_spending_opportunities(
+            full_accounting["transactions"],
+            obligations,
+            storage.list_financial_records(owner, "recommendation_feedback"),
+            as_of=as_of,
+        ),
+        "unusual_activity": _unusual_activity(full_accounting, balance_history),
+    }
+
+
+def _empty_dashboard_insights(as_of: date) -> dict:
+    return {
+        "recommendations": {
+            "currency": "USD",
+            "as_of": as_of.isoformat(),
+            "opportunities": [],
+            "reviewed": [],
+            "method": {
+                "definition": "Evidence-backed review prompts from explicit fees, confirmed recurring-cost increases, and sustained category changes in the household's own history.",
+                "boundaries": "No service is cancelled and no money is moved. Estimated impact is the observed increase or fee amount, not a promise that it can all be eliminated.",
+            },
+        },
+        "unusual_activity": [],
+    }
+
+
 def _net_worth_attribution(
     *,
     account_by_key: dict[str, dict],
@@ -400,7 +447,7 @@ def _retirement_readiness(scenarios: list[dict]) -> dict:
 
 
 @router.get("/api/private/dashboard")
-def financial_dashboard(request: Request) -> dict:
+def financial_dashboard(request: Request, include_insights: bool = True) -> dict:
     owner = require_owner(request)
     storage = request.app.state.storage
     accounts = _active(storage, owner, "account")
@@ -419,13 +466,6 @@ def financial_dashboard(request: Request) -> dict:
     credit_account_ids = {
         item["account_id"] for item in accounts if item.get("type") == "credit"
     }
-    full_accounting = build_accounting_view(
-        transactions,
-        storage.list_transaction_adjustments(owner),
-        storage.list_provider_record_versions(owner, "transaction"),
-        classifications,
-        credit_account_ids,
-    )
     latest_transaction_date = max(
         (
             date.fromisoformat(item["date"])
@@ -559,11 +599,20 @@ def financial_dashboard(request: Request) -> dict:
         ending_net_worth=net_worth,
         operating_surplus=operating_surplus,
     )
-    recommendations = build_spending_opportunities(
-        full_accounting["transactions"],
-        obligations,
-        storage.list_financial_records(owner, "recommendation_feedback"),
-        as_of=latest_transaction_date,
+    insights = (
+        _dashboard_insights(
+            storage,
+            owner,
+            transactions,
+            accounts,
+            balance_history,
+            classifications,
+            credit_account_ids,
+            obligations,
+            as_of=latest_transaction_date,
+        )
+        if include_insights
+        else _empty_dashboard_insights(latest_transaction_date)
     )
     retirement_readiness = _retirement_readiness(storage.list_scenarios(owner))
     return {
@@ -578,7 +627,8 @@ def financial_dashboard(request: Request) -> dict:
         "metrics": metrics,
         "net_worth_change": net_worth_change,
         "retirement_readiness": retirement_readiness,
-        "recommendations": recommendations,
+        "recommendations": insights["recommendations"],
+        "insights_loading": not include_insights,
         "sections": {
             "cash_flow": {
                 **accounting_metrics["cash_flow"],
@@ -598,10 +648,47 @@ def financial_dashboard(request: Request) -> dict:
             },
         },
         "spending_by_category": accounting_metrics["spending_by_category"],
-        "unusual_activity": _unusual_activity(full_accounting, balance_history),
+        "unusual_activity": insights["unusual_activity"],
         "billing_alerts": _billing_alerts(transactions, accounts),
         "unusual_activity_method": {
             "definition": "Recent charges are compared with earlier charges at the same merchant; balance changes use a high materiality threshold.",
             "limitations": "A charge needs at least six earlier merchant-specific observations and must exceed both $1,000 and a strong merchant-relative threshold. Same-day repeats are not called duplicates without stronger provider evidence, and signals are not fraud determinations.",
         },
     }
+
+
+@router.get("/api/private/dashboard/insights")
+def dashboard_insights(request: Request) -> dict:
+    owner = require_owner(request)
+    storage = request.app.state.storage
+    transactions = storage.list_financial_records(owner, "transaction")
+    accounts = _active(storage, owner, "account")
+    _, balance_history = _latest_balances(_active(storage, owner, "balance"))
+    classifications = effective_classifications(storage, owner)
+    credit_account_ids = {
+        item["account_id"] for item in accounts if item.get("type") == "credit"
+    }
+    latest_transaction_date = max(
+        (
+            date.fromisoformat(item["date"])
+            for item in transactions
+            if not item.get("removed") and item.get("date")
+        ),
+        default=date.today(),
+    )
+    obligations = [
+        item
+        for item in storage.list_recurring_obligations(owner)
+        if item.get("status") == "confirmed"
+    ]
+    return _dashboard_insights(
+        storage,
+        owner,
+        transactions,
+        accounts,
+        balance_history,
+        classifications,
+        credit_account_ids,
+        obligations,
+        as_of=latest_transaction_date,
+    )

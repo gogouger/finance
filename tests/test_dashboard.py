@@ -295,6 +295,25 @@ def test_owner_sees_explainable_metrics_from_normalized_records(
     assert "not available" in dashboard["net_worth_change"]["limitations"][-1]
 
 
+def test_dashboard_can_return_headlines_before_history_wide_insights(
+    dashboard_service: str,
+):
+    headlines = _json(
+        _request(
+            f"{dashboard_service}/api/private/dashboard?include_insights=false",
+            headers=OWNER,
+        )
+    )
+    insights = _json(
+        _request(f"{dashboard_service}/api/private/dashboard/insights", headers=OWNER)
+    )
+
+    assert headlines["insights_loading"] is True
+    assert headlines["metrics"]
+    assert headlines["unusual_activity"] == []
+    assert set(insights) == {"recommendations", "unusual_activity"}
+
+
 def test_expected_recurring_costs_are_not_mislabelled_as_unusual(
     dashboard_service: str,
 ):

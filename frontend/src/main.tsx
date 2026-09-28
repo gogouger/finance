@@ -334,6 +334,7 @@ type DashboardResult = {
     reviewed: SpendingRecommendation[];
     method: { definition: string; boundaries: string };
   };
+  insights_loading: boolean;
   sections: {
     cash_flow: {
       depository_credits: number;
@@ -364,6 +365,7 @@ type DashboardResult = {
   billing_alerts: BillingAlert[];
   unusual_activity_method: { definition: string; limitations: string };
 };
+type DashboardInsights = Pick<DashboardResult, "recommendations" | "unusual_activity">;
 type InvestmentAccountSummary = {
   account_id: string;
   name: string;
@@ -1476,7 +1478,7 @@ function Dashboard() {
   const [error, setError] = useState("");
   useEffect(() => {
     Promise.allSettled([
-      fetch("/api/private/dashboard").then((response) => {
+      fetch("/api/private/dashboard?include_insights=false").then((response) => {
         if (!response.ok) throw new Error("dashboard unavailable");
         return response.json() as Promise<DashboardResult>;
       }),
@@ -1489,7 +1491,19 @@ function Dashboard() {
         return response.json() as Promise<AssetsResult>;
       }),
     ]).then(([dashboardResult, investmentResult, assetResult]) => {
-      if (dashboardResult.status === "fulfilled") setDashboard(dashboardResult.value);
+      if (dashboardResult.status === "fulfilled") {
+        setDashboard(dashboardResult.value);
+        void fetch("/api/private/dashboard/insights")
+          .then((response) => response.ok ? response.json() as Promise<DashboardInsights> : null)
+          .then((insights) => {
+            if (!insights) return;
+            setDashboard((current) => current ? {
+              ...current,
+              ...insights,
+              insights_loading: false,
+            } : current);
+          });
+      }
       else setError("The financial overview could not be loaded. Check connection health and try again.");
       if (investmentResult.status === "fulfilled") setInvestments(investmentResult.value);
       if (assetResult.status === "fulfilled") {
@@ -1715,13 +1729,15 @@ function Dashboard() {
                   <p className="eyebrow">Review, not a verdict</p>
                   <h2>Unusual activity</h2>
                 </div>
-                <span>{dashboard.unusual_activity.length} signals</span>
+                <span>{dashboard.insights_loading ? "analyzing" : `${dashboard.unusual_activity.length} signals`}</span>
               </div>
               <p className="quiet">
                 {dashboard.unusual_activity_method.definition}{" "}
                 {dashboard.unusual_activity_method.limitations}
               </p>
-              {dashboard.unusual_activity.length === 0 ? (
+              {dashboard.insights_loading ? (
+                <div className="empty-signal"><strong>Analyzing your full transaction history…</strong><p>Your current balances and trailing-year spending are ready; review signals arrive separately so they do not delay the dashboard.</p></div>
+              ) : dashboard.unusual_activity.length === 0 ? (
                 <div className="empty-signal">
                   <strong>No review signals right now</strong>
                   <p>
@@ -1751,11 +1767,11 @@ function Dashboard() {
             </section>
           </div>
           <SpendingAnalytics />
-          <RecommendationQueue data={dashboard.recommendations} saved={() => {
+          {dashboard.insights_loading ? <section className="dashboard-panel recommendation-panel"><div className="section-title"><div><p className="eyebrow">Potential savings</p><h2>Where a review may save money</h2></div><span>analyzing</span></div><p className="quiet">Checking full transaction history for explicit fees, recurring-price changes, and sustained category changes.</p></section> : <RecommendationQueue data={dashboard.recommendations} saved={() => {
             void fetch("/api/private/dashboard")
               .then((response) => response.ok ? response.json() as Promise<DashboardResult> : null)
               .then((updated) => { if (updated) setDashboard(updated); });
-          }} />
+          }} />}
           <section className="metric-catalog">
             <div className="section-title">
               <div>
