@@ -43,3 +43,12 @@ for (const [url, headingFragment] of projectPages) {
     await assertNoPageOverflow(page);
   });
 }
+
+test("Athletic preview keeps an honest sample story when live telemetry is unavailable", async ({ page }) => {
+  await page.route("**/__athletics/summary", (route) => route.abort());
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("https://gordongouger.com/athletic-analytics.html", { waitUntil: "networkidle" });
+  await expect(page.getByText("illustrative sample state")).toBeVisible();
+  await expect(page.getByRole("link", { name: /Open Athletic Analytics/ }).first()).toBeVisible();
+  await assertNoPageOverflow(page);
+});
