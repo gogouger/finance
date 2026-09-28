@@ -1081,28 +1081,47 @@ function NetWorthVisual({ dashboard }: { dashboard: DashboardResult }) {
   );
 }
 
-function NetWorthProjection({ dashboard, readiness }: { dashboard: DashboardResult; readiness: DashboardResult["retirement_readiness"] }) {
+function NetWorthProjection({ dashboard, readiness, assets }: { dashboard: DashboardResult; readiness: DashboardResult["retirement_readiness"]; assets: AssetsResult | null }) {
   const metrics = new Map(dashboard.metrics.map((metric) => [metric.key, metric.value]));
   const currentNetWorth = metrics.get("net_worth") || 0;
   const investedToday = metrics.get("investment_value") || 0;
+  const householdAssetValue = metrics.get("household_asset_value") || 0;
+  const currentHomeValue = (assets?.assets || [])
+    .filter((asset) => asset.kind === "home")
+    .reduce((total, asset) => total + (asset.effective_valuation?.amount || asset.valuation.amount), 0);
+  const currentVehicleValue = (assets?.assets || [])
+    .filter((asset) => asset.kind === "vehicle")
+    .reduce((total, asset) => total + (asset.effective_valuation?.amount || asset.valuation.amount), 0);
+  const otherFixedValue = currentNetWorth - investedToday - currentHomeValue - currentVehicleValue;
   const observedSurplus = dashboard.sections.cash_flow.available
     ? dashboard.sections.cash_flow.operating_surplus
     : 0;
   const [years, setYears] = useState(10);
   const [returnPercent, setReturnPercent] = useState(6.5);
   const [annualSavings, setAnnualSavings] = useState(Math.round(observedSurplus / 100) * 100);
+  const [homeGrowthPercent, setHomeGrowthPercent] = useState(3);
+  const [vehicleDepreciationPercent, setVehicleDepreciationPercent] = useState(7);
   const annualReturn = returnPercent / 100;
+  const annualHomeGrowth = homeGrowthPercent / 100;
+  const annualVehicleDepreciation = vehicleDepreciationPercent / 100;
+  const investmentValueAt = (year: number) => investedToday * Math.pow(1 + annualReturn, year)
+    + annualSavings * (annualReturn === 0
+      ? year
+      : (Math.pow(1 + annualReturn, year) - 1) / annualReturn);
+  const homeValueAt = (year: number) => currentHomeValue * Math.pow(1 + annualHomeGrowth, year);
+  const vehicleValueAt = (year: number) => currentVehicleValue * Math.pow(Math.max(0, 1 - annualVehicleDepreciation), year);
   const futureInvestments = investedToday * Math.pow(1 + annualReturn, years)
     + annualSavings * (annualReturn === 0
       ? years
       : (Math.pow(1 + annualReturn, years) - 1) / annualReturn);
-  const futureNetWorth = currentNetWorth - investedToday + futureInvestments;
+  const futureHome = homeValueAt(years);
+  const futureVehicles = vehicleValueAt(years);
+  const futureNetWorth = otherFixedValue + futureInvestments + futureHome + futureVehicles;
   const points = Array.from({ length: years + 1 }, (_, year) => {
-    const investments = investedToday * Math.pow(1 + annualReturn, year)
-      + annualSavings * (annualReturn === 0
-        ? year
-        : (Math.pow(1 + annualReturn, year) - 1) / annualReturn);
-    return { year, value: currentNetWorth - investedToday + investments };
+    return {
+      year,
+      value: otherFixedValue + investmentValueAt(year) + homeValueAt(year) + vehicleValueAt(year),
+    };
   });
   const max = Math.max(...points.map((point) => point.value), currentNetWorth, 1);
   const min = Math.min(...points.map((point) => point.value), currentNetWorth, 0);
@@ -1120,16 +1139,25 @@ function NetWorthProjection({ dashboard, readiness }: { dashboard: DashboardResu
   return (
     <section className="dashboard-panel net-worth-projection" aria-labelledby="net-worth-projection-heading">
       <div className="section-title">
-        <div><p className="eyebrow">Looking forward</p><h2 id="net-worth-projection-heading">What could today’s saving rate become?</h2></div>
+        <div><p className="eyebrow">Looking forward</p><h2 id="net-worth-projection-heading">What could the whole balance sheet become?</h2></div>
         <strong>{money.format(futureNetWorth)}</strong>
       </div>
-      <p className="quiet">A transparent scenario—not a prediction. It compounds tracked investments, adds the savings you choose, and holds today’s home, vehicles, cash, and liabilities flat.</p>
+      <p className="quiet">A nominal, pre-tax scenario—not a prediction. It compounds tracked investments, adds the savings you choose at each year-end, applies your home and vehicle assumptions below, and holds cash, other assets, and liabilities fixed.</p>
       {!readiness.available && <p className="projection-retirement-link">Want to model retirement taxes, early access, and the years after you stop working? <a href={readiness.action_href}>Build a retirement comparison</a>.</p>}
       <div className="projection-controls">
         <label>Years ahead <strong>{years}</strong><input aria-label="Years ahead" type="range" min="1" max="40" step="1" value={years} onChange={(event) => setYears(Number(event.target.value))} /></label>
         <label>Annual investment return <strong>{returnPercent.toFixed(1)}%</strong><input aria-label="Annual investment return" type="range" min="0" max="10" step="0.25" value={returnPercent} onChange={(event) => setReturnPercent(Number(event.target.value))} /></label>
         <label>Annual amount invested <strong>{money.format(annualSavings)}</strong><input aria-label="Annual amount invested" type="range" min="-50000" max="200000" step="500" value={annualSavings} onChange={(event) => setAnnualSavings(Number(event.target.value))} /></label>
+        {currentHomeValue > 0 && <label>Annual home value change <strong>{homeGrowthPercent.toFixed(1)}%</strong><input aria-label="Annual home value change" type="range" min="-5" max="8" step="0.25" value={homeGrowthPercent} onChange={(event) => setHomeGrowthPercent(Number(event.target.value))} /></label>}
+        {currentVehicleValue > 0 && <label>Annual vehicle depreciation <strong>{vehicleDepreciationPercent.toFixed(1)}%</strong><input aria-label="Annual vehicle depreciation" type="range" min="0" max="20" step="0.5" value={vehicleDepreciationPercent} onChange={(event) => setVehicleDepreciationPercent(Number(event.target.value))} /></label>}
       </div>
+      <div className="projection-composition" aria-label="Projection component breakdown">
+        <article><span>Investments</span><strong>{money.format(investedToday)} → {money.format(futureInvestments)}</strong><small>{money.format(futureInvestments - investedToday)} from modeled return and contributions</small></article>
+        {currentHomeValue > 0 && <article><span>Home scenario</span><strong>{money.format(currentHomeValue)} → {money.format(futureHome)}</strong><small>{homeGrowthPercent.toFixed(1)}% nominal annual value change</small></article>}
+        {currentVehicleValue > 0 && <article><span>Vehicles scenario</span><strong>{money.format(currentVehicleValue)} → {money.format(futureVehicles)}</strong><small>{vehicleDepreciationPercent.toFixed(1)}% annual depreciation</small></article>}
+        <article><span>Cash, other assets, and liabilities</span><strong>{money.format(otherFixedValue)} → {money.format(otherFixedValue)}</strong><small>Held flat; includes any registered debt as a negative amount</small></article>
+      </div>
+      {!assets && householdAssetValue > 0 && <p className="visual-note">Loading the dated home and vehicle valuations used to split this asset total. Until they arrive, the registered asset portion remains in the fixed component.</p>}
       <figure className="projection-chart">
         <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} role="img" aria-label={`Projected household net worth in ${years} years: ${money.format(futureNetWorth)}`}>
           {[0, .5, 1].map((fraction) => {
@@ -1142,7 +1170,7 @@ function NetWorthProjection({ dashboard, readiness }: { dashboard: DashboardResu
           <text className="chart-label" x={padding.left} y={chartHeight - 10}>Today</text>
           <text className="chart-label" x={chartWidth - padding.right} y={chartHeight - 10} textAnchor="end">{years} years</text>
         </svg>
-        <figcaption>Tracked investments: {money.format(investedToday)} today → {money.format(futureInvestments)}. {annualSavings === observedSurplus ? "The contribution rate matches your observed trailing-12-month operating surplus." : "The contribution rate is a scenario you set."}</figcaption>
+        <figcaption>Investments: {money.format(investedToday)} today → {money.format(futureInvestments)}. Home: {money.format(currentHomeValue)} → {money.format(futureHome)}. {annualSavings === observedSurplus ? "The contribution rate matches your observed trailing-12-month operating surplus." : "The contribution rate is a scenario you set."}</figcaption>
       </figure>
       <div className="projection-summary"><span>{money.format(currentNetWorth)} today</span><i /><span>{money.format(futureNetWorth)} in {years} years</span><button type="button" onClick={resetToObserved}>Use observed saving rate</button></div>
     </section>
@@ -1637,7 +1665,7 @@ function Dashboard() {
             <p className="visual-note">The brokerage amount is already part of Household investment value and Long-term net worth. It appears here only to make available liquidity clear—not to count it twice.</p>
           </section>}
           <NetWorthVisual dashboard={dashboard} />
-          <NetWorthProjection dashboard={dashboard} readiness={dashboard.retirement_readiness} />
+          <NetWorthProjection dashboard={dashboard} readiness={dashboard.retirement_readiness} assets={assets} />
           <FinancialChangeStory dashboard={dashboard} />
           {dashboard.retirement_readiness.available && <RetirementReadiness readiness={dashboard.retirement_readiness} />}
           {investments && <InvestmentOverview data={investments} />}

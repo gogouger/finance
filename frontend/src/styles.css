@@ -708,6 +708,12 @@ footer {
 .projection-controls label { display:grid; grid-template-columns:1fr auto; gap:8px; align-items:center; padding:12px 14px; background:rgba(131,215,173,.045); color:#9fb2a7; font-size:.7rem; }
 .projection-controls strong { color:#dcebe2; font-size:.78rem; font-variant-numeric:tabular-nums; }
 .projection-controls input { grid-column:1/-1; width:100%; accent-color:#83d7ad; }
+.projection-composition { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; margin:16px 0; }
+.projection-composition article { min-width:0; padding:13px 15px; border-left:2px solid rgba(131,215,173,.5); background:rgba(131,215,173,.045); }
+.projection-composition span,.projection-composition strong,.projection-composition small { display:block; }
+.projection-composition span { color:#9fb2a7; font-size:.64rem; letter-spacing:.06em; text-transform:uppercase; }
+.projection-composition strong { margin:6px 0 4px; color:#dcebe2; font-size:.86rem; font-variant-numeric:tabular-nums; }
+.projection-composition small { color:#82988c; font-size:.66rem; line-height:1.4; }
 .projection-chart { margin: 0; padding: 10px 8px 2px; background:rgba(131,215,173,.025); }
 .projection-chart svg { display:block; width:100%; height:auto; }
 .projection-chart figcaption { margin:8px 8px 2px; color:#82988c; font-size:.7rem; line-height:1.5; }
@@ -828,6 +834,7 @@ footer {
   }
   .liquidity-bridge { grid-template-columns: 1fr; gap: 12px; }
   .wealth-layout,.home-value-grid,.financial-change-story:not(:has(.change-story-head)),.projection-controls { grid-template-columns: 1fr; }
+  .projection-composition { grid-template-columns: 1fr; }
   .change-story-head{align-items:start;flex-direction:column}.change-story-head>div:last-child{text-align:left}.change-driver-grid{grid-template-columns:1fr}.change-waterfall{overflow-x:auto}.change-waterfall svg{min-width:680px}
   .account-stats,.account-activity-grid,.investment-summary-grid { grid-template-columns: 1fr; }
   .holding-benchmark{align-items:flex-start;flex-direction:column}.holding-benchmark>span:last-child{text-align:left}
