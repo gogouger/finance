@@ -133,8 +133,15 @@ def refresh_spy_benchmark(storage, owner: str) -> dict:
     api_key = os.environ.get("BENCHMARK_ALPHA_VANTAGE_API_KEY", "").strip()
     if not api_key:
         return {"status": "not_configured", "observations": 0}
-    total_return_observations = fetch_alpha_vantage_weekly_adjusted(api_key)
     price_observations = fetch_alpha_vantage_weekly_price(api_key)
+    # Price return is the primary, apples-to-apples comparison.  Some API
+    # plans throttle the adjusted series independently, so do not make a
+    # usable price comparison fail merely because optional total-return data
+    # is temporarily unavailable.
+    try:
+        total_return_observations = fetch_alpha_vantage_weekly_adjusted(api_key)
+    except BenchmarkProviderUnavailable:
+        total_return_observations = []
     observed_at = datetime.now(UTC).isoformat()
     # Preserve the original source identity for adjusted observations so an
     # upgrade does not strand the previously cached history. Price-return
@@ -161,5 +168,5 @@ def refresh_spy_benchmark(storage, owner: str) -> dict:
         "start": price_observations[0]["date"],
         "end": price_observations[-1]["date"],
         "cadence": "weekly",
-        "series": ["price_return", "dividend_and_split_adjusted"],
+        "series": ["price_return"] + (["dividend_and_split_adjusted"] if total_return_observations else []),
     }
