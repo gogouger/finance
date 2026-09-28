@@ -547,9 +547,9 @@ def financial_dashboard(request: Request) -> dict:
                 "operating_surplus": operating_surplus,
                 "available": bool(cash_rows),
                 "context": (
-                    "Observed bank movement is not profit or loss. Brokerage funding and card payments reduce bank cash while moving value or settling purchases counted elsewhere."
+                    "Saved means income left after personal spending; it is not the change in your checking balance."
                     if cash_rows
-                    else "Connect a bank account to measure movement. Household operating surplus remains a separate income-versus-spending measure."
+                    else "Saved means income left after personal spending. Connect a bank account to reconcile checking-account movement too."
                 ),
             },
             "adjusted_spending": {

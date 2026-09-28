@@ -1642,24 +1642,24 @@ function Dashboard() {
             <section className="dashboard-panel">
               <div className="section-title">
                 <div>
-                  <p className="eyebrow">Cash movement vs. spending</p>
-                  <h2>Two different truths</h2>
+                  <p className="eyebrow">Spending &amp; saving</p>
+                  <h2>What you spent and saved</h2>
                 </div>
               </div>
               <div className="flow-compare">
                 <article>
-                  <span>Household operating surplus · trailing 12 months</span>
+                  <span>Amount saved · trailing 12 months</span>
                   <strong>
                     {dashboard.sections.cash_flow.available
                       ? money.format(dashboard.sections.cash_flow.operating_surplus)
                       : "Not available yet"}
                   </strong>
                   {dashboard.sections.cash_flow.available && <p>
-                    Classified income minus adjusted personal spending
+                    Income left after personal spending
                   </p>}
                   <small>{dashboard.sections.cash_flow.context}</small>
                   {dashboard.sections.cash_flow.available && <details>
-                    <summary>Reconcile observed bank movement</summary>
+                    <summary>Why this differs from bank cash movement</summary>
                     <p>
                       <strong>{money.format(dashboard.sections.cash_flow.net)}</strong>{" "}
                       observed bank movement: {money.format(dashboard.sections.cash_flow.depository_credits)} credits minus{" "}
@@ -1677,7 +1677,7 @@ function Dashboard() {
                   </details>}
                 </article>
                 <article>
-                  <span>Adjusted personal spending · trailing 12 months</span>
+                  <span>Amount spent · trailing 12 months</span>
                   <strong>
                     {money.format(dashboard.sections.adjusted_spending.value)}
                   </strong>

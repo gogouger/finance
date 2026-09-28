@@ -393,7 +393,8 @@ def test_private_dashboard_page_ships_the_command_center_ui(
     with urllib.request.urlopen(f"{dashboard_service}{asset_path}") as response:
         application = response.read().decode()
 
-    assert "Adjusted personal spending" in application
+    assert "Amount spent" in application
+    assert "Amount saved" in application
     assert "Unusual activity" in application
     assert "Review, not a verdict" in application
     assert "Where the money actually went" in application
