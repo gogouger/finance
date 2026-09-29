@@ -424,10 +424,22 @@ def investment_positions(request: Request) -> dict:
             holdings_by_position[position_key] = candidate
     tax_lots = _active_records(storage, owner, "tax_lot")
     security_observations = _active_records(storage, owner, "security_observation")
+    security_observations_by_symbol: dict[str, list[dict]] = {}
+    for observation in security_observations:
+        security_observations_by_symbol.setdefault(
+            str(observation.get("symbol") or ""), []
+        ).append(observation)
+    benchmark_observations = _active_records(storage, owner, "benchmark_observation")
     spy_price_points = [
         item
-        for item in _active_records(storage, owner, "benchmark_observation")
+        for item in benchmark_observations
         if item.get("symbol") == "SPY" and item.get("return_basis") == "price_return"
+    ]
+    spy_total_return_points = [
+        item
+        for item in benchmark_observations
+        if item.get("symbol") == "SPY"
+        and item.get("return_basis") == "dividend_and_split_adjusted"
     ]
     for lot in tax_lots:
         source_account = str(lot.get("account_id") or "")
@@ -632,8 +644,10 @@ def investment_positions(request: Request) -> dict:
         )
         holding["security_total_return_replay"] = _security_total_return_replay(
             matching_lots,
-            [item for item in security_observations if item.get("symbol") == holding.get("ticker_symbol")],
-            [item for item in _active_records(storage, owner, "benchmark_observation") if item.get("symbol") == "SPY" and item.get("return_basis") == "dividend_and_split_adjusted"],
+            security_observations_by_symbol.get(
+                str(holding.get("ticker_symbol") or ""), []
+            ),
+            spy_total_return_points,
             str(holding.get("ticker_symbol") or ""),
         )
     return {
