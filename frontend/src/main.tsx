@@ -187,8 +187,18 @@ type RetirementResult = {
     years: RetirementComparisonYear[];
     at_retirement: RetirementComparisonYear;
     caveat: string;
+    lifetime_plan: {
+      funds_plan_through_end_age: boolean;
+      first_unmet_age: number | null;
+      planned_spending: number;
+      spending_met: number;
+      total_tax: number;
+      total_penalty: number;
+      ending_after_tax_value: number;
+      withdrawal_order: string[];
+    };
   }>;
-  ranking: Array<{ key: string; label: string; after_tax_value: number }>;
+  ranking: Array<{ key: string; label: string; after_tax_value: number; funds_plan_through_end_age: boolean; first_unmet_age: number | null; spending_met: number }>;
   optimized_mix: {
     annual_take_home_cost: number;
     annual_allocations: Record<"traditional" | "roth" | "hsa" | "taxable", number>;
@@ -566,7 +576,7 @@ const retirementDefaults: RetirementInputs = {
   hsa_contribution_limit: 8750,
   qualified_hsa_spending_percent: 15,
   annual_conversion_amount: 30000,
-  sepp_annual_distribution: 25000,
+  sepp_annual_distribution: 0,
   return_stddev_percent: 15,
   uncertainty_simulations: 300,
   uncertainty_seed: 42,
@@ -964,8 +974,8 @@ function Retirement() {
       </header>
       <section className="housing-topbar retirement-topbar" aria-label="Retirement comparison summary" aria-live="polite">
         <article><span>Same take-home cost</span><strong>{money.format(inputs.annual_take_home_sacrifice)}/yr</strong><small>Held equal for every path</small></article>
-        <article><span>Best modeled path</span><strong>{best?.label || "—"}</strong><small>{best ? `${money.format(best.after_tax_value)} spendable at ${inputs.retirement_age}` : "Calculating"}</small></article>
-        <article className={bridgeFunded ? "buy-ahead" : "rent-ahead"}><span>Taxable-path bridge</span><strong>{result ? money.format(result.bridge.existing_gap) : "—"}</strong><small>{bridgeFunded ? "No modeled gap" : `Gap before age ${Math.ceil(inputs.ruleset.unrestricted_access_age)}`}</small></article>
+        <article><span>Best modeled path</span><strong>{best?.label || "—"}</strong><small>{best ? (best.funds_plan_through_end_age ? `Funds spending through age ${inputs.end_age}` : `First modeled shortfall: age ${best.first_unmet_age}`) : "Calculating"}</small></article>
+        <article className={bridgeFunded ? "buy-ahead" : "rent-ahead"}><span>Taxable-only bridge</span><strong>{result ? money.format(result.bridge.existing_gap) : "—"}</strong><small>{bridgeFunded ? "Covered without other access paths" : `Gap before age ${Math.ceil(inputs.ruleset.unrestricted_access_age)}`}</small></article>
         <article><span>First-year spending</span><strong>{result ? money.format(result.bridge.annual_spending_at_retirement) : "—"}</strong><small>Inflation-adjusted at age {inputs.retirement_age}</small></article>
       </section>
       {error && <p className="form-error" role="alert">{error}</p>}
@@ -981,8 +991,8 @@ function Retirement() {
             <details className="housing-advanced"><summary>Starting account balances</summary><div className="field-grid compact-fields">
               <NumberField label="Taxable balance" value={inputs.taxable_balance} suffix="USD" change={update("taxable_balance")} />
               <NumberField label="Taxable basis" value={inputs.taxable_basis} suffix="USD" change={update("taxable_basis")} />
-              <NumberField label="Traditional" value={inputs.traditional_balance} suffix="USD" change={update("traditional_balance")} />
-              <NumberField label="Workplace plan" value={inputs.workplace_plan_balance} suffix="USD" change={update("workplace_plan_balance")} />
+              <NumberField label="Traditional total (includes workplace)" value={inputs.traditional_balance} suffix="USD" change={update("traditional_balance")} />
+              <NumberField label="Current workplace-plan portion" value={inputs.workplace_plan_balance} suffix="USD" change={update("workplace_plan_balance")} />
               <NumberField label="Roth balance" value={inputs.roth_balance} suffix="USD" change={update("roth_balance")} />
               <NumberField label="Roth basis" value={inputs.roth_contribution_basis} suffix="USD" change={update("roth_contribution_basis")} />
               <NumberField label="HSA balance" value={inputs.hsa_balance} suffix="USD" change={update("hsa_balance")} />
@@ -1019,11 +1029,12 @@ function Retirement() {
           </section>
           <section className={activeStage === 4 ? "housing-step active" : "housing-step"} data-stage="4" tabIndex={0} onFocus={() => setActiveStage(4)}>
             <p className="eyebrow">05 · Stop work early</p>
-            <h2>Retiring at 45 is a bridge problem.</h2>
-            <p>The model tests taxable assets, Roth contribution basis, conversion ladders, Rule of 55, 72(t), and simply paying the early-withdrawal penalty. Eligibility and failures stay visible.</p>
+            <h2>Retiring at 45 is a cash-flow problem—not a forced liquidation.</h2>
+            <p>The model funds each retirement year in order, applies tax and the early-withdrawal penalty only to money actually used, and makes taxable assets, Roth basis, conversions, Rule of 55, 72(t), and shortfalls visible.</p>
             <Slider label="Annual spending in today’s dollars" value={inputs.annual_retirement_spending} min={10000} max={250000} step={2500} format={(v) => `${money.format(v)}/yr`} change={update("annual_retirement_spending")} />
             <Slider label="Annual Roth conversion" value={inputs.annual_conversion_amount} min={0} max={150000} step={2500} format={(v) => `${money.format(v)}/yr`} change={update("annual_conversion_amount")} />
-            <Slider label="Fixed 72(t) distribution" value={inputs.sepp_annual_distribution} min={0} max={150000} step={2500} format={(v) => `${money.format(v)}/yr`} change={update("sepp_annual_distribution")} />
+            <Slider label="Optional fixed 72(t) distribution" value={inputs.sepp_annual_distribution} min={0} max={150000} step={2500} format={(v) => `${money.format(v)}/yr`} change={update("sepp_annual_distribution")} />
+            <p className="field-note">A nonzero 72(t) amount is treated as a fixed, multi-year schedule and disables the conversion ladder in this model. Keep it at $0 unless you are deliberately testing that access path.</p>
           </section>
           <section className={activeStage === 5 ? "housing-step active" : "housing-step"} data-stage="5" tabIndex={0} onFocus={() => setActiveStage(5)}>
             <p className="eyebrow">06 · Future rules are uncertain</p>
@@ -1042,7 +1053,7 @@ function Retirement() {
           {result ? <RetirementComparisonVisuals result={result} stage={activeStage} /> : <p className="dashboard-loading">Building the comparison…</p>}
         </section>
       </form>
-      {result && <details className="housing-accessible-results"><summary>Full strategy results and model boundaries</summary><p>{result.comparison_basis.ranking_metric} {result.disclaimer}</p><div className="table-wrap"><table><thead><tr><th>Path</th><th>Primary contribution</th><th>Taxable overflow</th><th>Match</th><th>Headline at {inputs.retirement_age}</th><th>Spendable estimate</th></tr></thead><tbody>{result.strategies.map((strategy) => <tr key={strategy.key}><td>{strategy.label}<small>{strategy.caveat}</small></td><td>{money.format(strategy.annual_primary_contribution)}</td><td>{money.format(strategy.annual_taxable_overflow)}</td><td>{money.format(strategy.employer_match)}</td><td>{money.format(strategy.at_retirement.headline_balance)}</td><td>{money.format(strategy.at_retirement.after_tax_value)}</td></tr>)}</tbody></table></div></details>}
+      {result && <details className="housing-accessible-results"><summary>Full strategy results and model boundaries</summary><p>{result.comparison_basis.ranking_metric} {result.disclaimer}</p><div className="table-wrap"><table><thead><tr><th>Path</th><th>Primary contribution</th><th>Taxable overflow</th><th>Match</th><th>Plan through {inputs.end_age}</th><th>Total tax + penalty</th><th>Ending after-tax value</th></tr></thead><tbody>{result.strategies.map((strategy) => <tr key={strategy.key}><td>{strategy.label}<small>{strategy.caveat}</small></td><td>{money.format(strategy.annual_primary_contribution)}</td><td>{money.format(strategy.annual_taxable_overflow)}</td><td>{money.format(strategy.employer_match)}</td><td>{strategy.lifetime_plan.funds_plan_through_end_age ? "Funded" : `Shortfall at ${strategy.lifetime_plan.first_unmet_age}`}</td><td>{money.format(strategy.lifetime_plan.total_tax + strategy.lifetime_plan.total_penalty)}</td><td>{money.format(strategy.lifetime_plan.ending_after_tax_value)}</td></tr>)}</tbody></table></div></details>}
     </main>
   );
 }

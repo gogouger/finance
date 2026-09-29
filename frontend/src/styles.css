@@ -107,6 +107,13 @@ footer {
   margin-bottom: 28px;
 }
 
+.field-note {
+  margin: 8px 0 0;
+  color: #9fb2a7;
+  font-size: .72rem;
+  line-height: 1.45;
+}
+
 .number-field > span {
   display: block;
   margin-bottom: 8px;

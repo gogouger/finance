@@ -128,7 +128,7 @@ def test_comparison_holds_take_home_sacrifice_constant(running_service: str):
     result = _compare(running_service, _inputs())
     strategies = {item["key"]: item for item in result["strategies"]}
 
-    assert result["model_version"] == "retirement-comparison-v1"
+    assert result["model_version"] == "retirement-comparison-v2-lifetime-cash-flow"
     assert result["comparison_basis"]["annual_take_home_sacrifice"] == 20_000
     assert strategies["taxable"]["annual_take_home_cost"] == 20_000
     assert strategies["roth"]["annual_take_home_cost"] == 20_000
@@ -155,6 +155,12 @@ def test_comparison_holds_take_home_sacrifice_constant(running_service: str):
         "return_distribution": "independent annual normal returns",
     }
     assert len(result["uncertainty"]["exclusions"]) == 3
+    for strategy in strategies.values():
+        lifetime = strategy["lifetime_plan"]
+        assert lifetime["planned_spending"] >= lifetime["spending_met"]
+        assert lifetime["total_tax"] >= 0
+        assert lifetime["total_penalty"] >= 0
+        assert lifetime["withdrawal_order"]
 
 
 def test_age_45_result_explains_bridge_and_access_constraints(
@@ -199,3 +205,65 @@ def test_tax_rate_changes_the_traditional_comparison(running_service: str):
     assert higher["traditional"]["at_retirement"]["headline_balance"] > lower[
         "traditional"
     ]["at_retirement"]["headline_balance"]
+
+
+def test_traditional_penalty_applies_only_to_actual_early_withdrawals(
+    running_service: str,
+):
+    result = _compare(
+        running_service,
+        _inputs(
+            retirement_age=45,
+            end_age=46,
+            taxable_balance=1_000_000,
+            taxable_basis=1_000_000,
+            annual_retirement_spending=10_000,
+            traditional_balance=100_000,
+            workplace_plan_balance=0,
+            annual_take_home_sacrifice=0,
+        ),
+    )
+    traditional = next(
+        item for item in result["strategies"] if item["key"] == "traditional"
+    )
+    # Taxable assets cover the only retirement year.  A traditional balance is
+    # not a withdrawal merely because retirement starts before 59½.
+    assert traditional["lifetime_plan"]["total_penalty"] == 0
+    assert traditional["lifetime_plan"]["funds_plan_through_end_age"] is True
+    assert traditional["at_retirement"]["after_tax_value"] == round(
+        traditional["at_retirement"]["headline_balance"] * 0.88,
+        2,
+    )
+
+
+def test_lifetime_plan_models_a_valid_sepp_without_an_early_penalty(
+    running_service: str,
+):
+    result = _compare(
+        running_service,
+        _inputs(
+            retirement_age=45,
+            end_age=47,
+            annual_take_home_sacrifice=0,
+            taxable_balance=0,
+            taxable_basis=0,
+            traditional_balance=1_000_000,
+            workplace_plan_balance=0,
+            roth_balance=0,
+            roth_contribution_basis=0,
+            hsa_balance=0,
+            annual_retirement_spending=20_000,
+            annual_conversion_amount=30_000,
+            sepp_annual_distribution=25_000,
+            annual_return_percent=0,
+        ),
+    )
+    traditional = next(
+        item for item in result["strategies"] if item["key"] == "traditional"
+    )["lifetime_plan"]
+
+    assert traditional["sepp_72t"]["enabled"] is True
+    assert traditional["sepp_72t"]["commitment_valid"] is True
+    assert traditional["conversion_ladder"]["disabled_while_sepp_is_active"] is True
+    assert traditional["total_penalty"] == 0
+    assert traditional["years"][0]["sources"]["sepp_72t"] == 25_000

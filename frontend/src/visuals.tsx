@@ -260,8 +260,18 @@ type RetirementComparisonResult = {
     caveat: string;
     years: Array<{ age: number; headline_balance: number; after_tax_value: number; accessible_basis: number }>;
     at_retirement: { age: number; headline_balance: number; after_tax_value: number; accessible_basis: number };
+    lifetime_plan: {
+      funds_plan_through_end_age: boolean;
+      first_unmet_age: number | null;
+      planned_spending: number;
+      spending_met: number;
+      total_tax: number;
+      total_penalty: number;
+      ending_after_tax_value: number;
+      withdrawal_order: string[];
+    };
   }>;
-  ranking: Array<{ key: string; label: string; after_tax_value: number }>;
+  ranking: Array<{ key: string; label: string; after_tax_value: number; funds_plan_through_end_age: boolean; first_unmet_age: number | null; spending_met: number }>;
   optimized_mix: {
     annual_allocations: Record<"traditional" | "roth" | "hsa" | "taxable", number>;
     employer_match: number;
@@ -340,8 +350,8 @@ export function RetirementComparisonVisuals({ result, stage = 0 }: { result: Ret
     },
     {
       eyebrow: "Tax timing",
-      title: best ? `${best.label} leads at retirement in this scenario` : "Compare after-tax value",
-      note: "The line ranking can flip when current and retirement tax rates, contribution limits, or employer match change.",
+      title: best ? `${best.label} leads on lifetime plan funding in this scenario` : "Compare lifetime funding",
+      note: "The ranking first asks whether spending is funded through the selected end age, then compares spending funded and remaining after-tax value.",
       evidence: ["traditional", "roth", "taxable"].map((key) => [byKey[key]?.label || key, byKey[key]?.at_retirement.after_tax_value || 0] as [string, number]),
     },
     {
@@ -356,12 +366,12 @@ export function RetirementComparisonVisuals({ result, stage = 0 }: { result: Ret
     },
     {
       eyebrow: `${result.bridge.years}-year bridge`,
-      title: result.bridge.existing_gap > 0 ? `${money.format(result.bridge.existing_gap)} remains after directing new savings to brokerage` : "The taxable-saving path covers the modeled bridge",
-      note: bestAccess ? `${accessLabels[bestAccess.strategy] || bestAccess.strategy} produces the highest modeled spendable withdrawals among eligible single-path tests.` : "No tested early-access path is eligible.",
+      title: best?.funds_plan_through_end_age ? `${best.label} funds the selected planning horizon` : `${best?.label || "The leading path"} first falls short at age ${best?.first_unmet_age ?? "—"}`,
+      note: bestAccess ? `${accessLabels[bestAccess.strategy] || bestAccess.strategy} is still shown as a single-path access test. The ranking above instead uses a combined yearly withdrawal plan.` : "No tested early-access path is eligible.",
       evidence: [
-        ["Bridge spending", result.bridge.required_spending],
-        ["Accessible on taxable path", result.bridge.accessible_at_retirement],
-        ["First-year retirement spending", result.bridge.annual_spending_at_retirement],
+        ["Planned lifetime spending", byKey[best?.key || ""]?.lifetime_plan.planned_spending || 0],
+        ["Spending funded", best?.spending_met || 0],
+        ["Tax + penalty actually paid", (byKey[best?.key || ""]?.lifetime_plan.total_tax || 0) + (byKey[best?.key || ""]?.lifetime_plan.total_penalty || 0)],
       ] as [string, number][],
     },
     {
@@ -373,14 +383,14 @@ export function RetirementComparisonVisuals({ result, stage = 0 }: { result: Ret
   ];
   const active = stages[Math.min(stage, stages.length - 1)];
   return <section className="visual-story housing-visual retirement-visual" aria-label="Retirement account choices explained visually">
-    <div className="story-heading"><div><p className="eyebrow">Same sacrifice, four paths</p><h3>Spendable value by age</h3></div><p>Each line values embedded tax and early-access friction. Headline account balances are intentionally not the comparison metric.</p></div>
+    <div className="story-heading"><div><p className="eyebrow">Same sacrifice, four paths</p><h3>Accumulated account value before retirement</h3></div><p>The lines show accumulated account value after embedded taxes where applicable. The lifetime ranking below—not a forced retirement-day liquidation—decides which plan funds spending best.</p></div>
     <LineChart rows={rows} x={(row) => row.age} label="After-tax value of equal take-home retirement saving strategies" series={[
       { label: "Taxable", color: retirementColors.taxable, value: (row) => row.taxable },
       { label: "Roth", color: retirementColors.roth, value: (row) => row.roth },
       { label: "Traditional", color: retirementColors.traditional, value: (row) => row.traditional },
       { label: "HSA", color: retirementColors.hsa, value: (row) => row.hsa },
     ]} />
-    <div className={`story-callout ${result.bridge.existing_gap > 0 ? "warning" : ""}`}><strong>{best ? `${best.label} leads by modeled spendable value at ${result.retirement_age}.` : "Building the ranking."}</strong><span>{result.bridge.existing_gap > 0 ? `The taxable-saving path leaves a ${money.format(result.bridge.existing_gap)} bridge gap.` : "The taxable-saving path covers the modeled bridge."}</span></div>
+    <div className={`story-callout ${best && !best.funds_plan_through_end_age ? "warning" : ""}`}><strong>{best ? (best.funds_plan_through_end_age ? `${best.label} funds the modeled plan through the selected horizon.` : `${best.label} first falls short at age ${best.first_unmet_age}.`) : "Building the ranking."}</strong><span>{best ? `${money.format(best.spending_met)} of planned spending is met; ${money.format(best.after_tax_value)} remains after modeled end-age taxes.` : "The lifetime cash-flow calculation is running."}</span></div>
     <label className="year-scrubber"><span>Explain age {selectedAge}</span><input type="range" min={0} max={maxIndex} value={index} onChange={(event) => setSelected(Number(event.target.value))} /></label>
     <article className="housing-stage-evidence" aria-live="polite"><p className="eyebrow">{active.eyebrow}</p><h4>{active.title}</h4><p>{active.note}</p><dl>{active.evidence.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{money.format(value)}</dd></div>)}</dl></article>
     {(stage === 2 || stage === 4) && <article className="optimized-mix"><div><p className="eyebrow">Practical mix</p><h4>Protect the match, then fund access.</h4><span>{result.optimized_mix.match_protected ? "Full modeled match protected" : "Take-home budget cannot protect the full match"}</span></div><dl>{Object.entries(result.optimized_mix.annual_allocations).map(([account, amount]) => <div key={account}><dt>{account}</dt><dd>{money.format(amount)}/yr</dd></div>)}<div><dt>Employer match</dt><dd>{money.format(result.optimized_mix.employer_match)}/yr</dd></div><div><dt>Projected bridge gap</dt><dd>{money.format(result.optimized_mix.bridge.projected_gap)}</dd></div></dl></article>}
