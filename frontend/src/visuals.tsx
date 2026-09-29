@@ -83,8 +83,11 @@ function LineChart<T>({
   label: string;
 }) {
   const width = 820;
-  const height = 300;
-  const pad = { left: 72, right: 20, top: 24, bottom: 42 };
+  // The visual panels cap chart height on a normal laptop screen.  Keep the
+  // SVG's native proportion close to that rendered proportion so browsers do
+  // not center a narrow chart inside a wide fixed-height box.
+  const height = 250;
+  const pad = { left: 72, right: 20, top: 16, bottom: 36 };
   const values = rows.flatMap((row) => series.map((item) => item.value(row)));
   const min = Math.min(0, ...values);
   const max = Math.max(1, ...values);
