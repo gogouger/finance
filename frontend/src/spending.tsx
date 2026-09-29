@@ -5,6 +5,11 @@ const money = new Intl.NumberFormat("en-US", {
   currency: "USD",
   maximumFractionDigits: 0,
 });
+let spendingPresentationMode = false;
+const formatMoney = (value: number) => {
+  const formatted = money.format(value);
+  return spendingPresentationMode ? formatted.replace(/\d/g, "•") : formatted;
+};
 const label = (value: string) => value.replaceAll("_", " ").toLowerCase();
 const dateLabel = (value?: string) =>
   value
@@ -149,7 +154,7 @@ function SpendingChart({ rows }: { rows: MonthRow[] }) {
               y2={top + inner * fraction}
             />
             <text x={left - 8} y={top + inner * fraction + 4} textAnchor="end">
-              {money.format(max * (1 - fraction))}
+              {formatMoney(max * (1 - fraction))}
             </text>
           </g>
         ))}
@@ -219,7 +224,7 @@ function ReviewItem({ item, saved }: { item: ReviewRow; saved: () => void }) {
     <article className="review-row">
       <div>
         <span>{dateLabel(item.date)}</span>
-        <strong>{money.format(item.amount)}</strong>
+        <strong>{formatMoney(item.amount)}</strong>
       </div>
       <label>
         <span>Merchant</span>
@@ -249,7 +254,8 @@ function ReviewItem({ item, saved }: { item: ReviewRow; saved: () => void }) {
   );
 }
 
-export function SpendingAnalytics() {
+export function SpendingAnalytics({ presentationMode = false }: { presentationMode?: boolean }) {
+  spendingPresentationMode = presentationMode;
   const [months, setMonths] = useState(12);
   const [data, setData] = useState<SpendingResult | null>(null);
   const [error, setError] = useState("");
@@ -325,7 +331,7 @@ export function SpendingAnalytics() {
       <div className="spending-summary">
         <article>
           <span>Net spending · {periodLabel}</span>
-          <strong>{money.format(data.summary.net_spending)}</strong>
+          <strong>{formatMoney(data.summary.net_spending)}</strong>
           <small>
             {dateLabel(data.period.start || undefined)}–
             {dateLabel(data.period.end)}
@@ -333,24 +339,24 @@ export function SpendingAnalytics() {
         </article>
         <article>
           <span>Average per month</span>
-          <strong>{money.format(data.summary.average_monthly_spending)}</strong>
+          <strong>{formatMoney(data.summary.average_monthly_spending)}</strong>
           <small>Observed, not a target</small>
         </article>
         <article>
           <span>Refunds and credits</span>
-          <strong>{money.format(data.summary.refunds)}</strong>
+          <strong>{formatMoney(data.summary.refunds)}</strong>
           <small>Removed from purchases</small>
         </article>
         <article>
           <span>Card payments</span>
-          <strong>{money.format(data.summary.credit_card_payments)}</strong>
+          <strong>{formatMoney(data.summary.credit_card_payments)}</strong>
           <small>Cash movement, not spending</small>
         </article>
       </div>
       {data.data_quality.cross_source_records_excluded > 0 && (
         <p className="dedupe-note">
           {data.data_quality.cross_source_records_excluded} overlapping CSV/Plaid
-          copies ({money.format(data.data_quality.cross_source_absolute_value_excluded)})
+          copies ({formatMoney(data.data_quality.cross_source_absolute_value_excluded)})
           are excluded from every total. Plaid is used for the calculated record;
           the encrypted raw imports remain preserved for audit history.
         </p>
@@ -380,7 +386,7 @@ export function SpendingAnalytics() {
                   {row.merchant_name}
                   <small>{row.transaction_count} transactions</small>
                 </span>
-                <strong>{money.format(row.net_spending)}</strong>
+                <strong>{formatMoney(row.net_spending)}</strong>
               </div>
             ))}
           </div>
@@ -407,7 +413,7 @@ export function SpendingAnalytics() {
                       }}
                     />
                   </div>
-                  <strong>{money.format(row.net_spending)}</strong>
+                  <strong>{formatMoney(row.net_spending)}</strong>
                 </div>
               ))}
           </div>
@@ -425,7 +431,7 @@ export function SpendingAnalytics() {
               {data.quarterly.map((row) => (
                 <p key={row.period}>
                   <span>{row.period}</span>
-                  <strong>{money.format(row.net_spending)}</strong>
+                  <strong>{formatMoney(row.net_spending)}</strong>
                 </p>
               ))}
             </div>
@@ -449,14 +455,14 @@ export function SpendingAnalytics() {
           {data.yearly.map((row) => (
             <article key={row.year}>
               <div><strong>{row.year}</strong><span>{row.complete_year ? "Complete year" : `${row.months_covered} months imported`}</span></div>
-              <b>{money.format(row.net_spending)} <small>net spending</small></b>
+              <b>{formatMoney(row.net_spending)} <small>net spending</small></b>
               <dl>
-                <div><dt>Average / observed month</dt><dd>{money.format(row.average_per_observed_month)}</dd></div>
-                <div><dt>Refunds</dt><dd>{money.format(row.refunds)}</dd></div>
-                <div><dt>Card payments excluded</dt><dd>{money.format(row.card_payments)}</dd></div>
+                <div><dt>Average / observed month</dt><dd>{formatMoney(row.average_per_observed_month)}</dd></div>
+                <div><dt>Refunds</dt><dd>{formatMoney(row.refunds)}</dd></div>
+                <div><dt>Card payments excluded</dt><dd>{formatMoney(row.card_payments)}</dd></div>
                 <div><dt>Transactions</dt><dd>{row.transaction_count}</dd></div>
               </dl>
-              {row.current_year && <p>Current pace: {money.format(row.annualized_pace)} over 12 months. This is context, not a forecast.</p>}
+              {row.current_year && <p>Current pace: {formatMoney(row.annualized_pace)} over 12 months. This is context, not a forecast.</p>}
               {!row.complete_year && !row.current_year && <p>Partial historical import. No full-year extrapolation is shown.</p>}
             </article>
           ))}
@@ -479,7 +485,7 @@ export function SpendingAnalytics() {
                 <article key={row.id}>
                   <span>{row.cadence}</span>
                   <strong>
-                    {row.merchant_name} · {money.format(row.estimated_amount)}
+                    {row.merchant_name} · {formatMoney(row.estimated_amount)}
                   </strong>
                   <p>{row.explanation}</p>
                 </article>
@@ -504,7 +510,7 @@ export function SpendingAnalytics() {
                 <p>
                   <span>Statement balance</span>
                   <strong>
-                    {money.format(row.last_statement_balance || 0)}
+                    {formatMoney(row.last_statement_balance || 0)}
                   </strong>
                 </p>
                 <p>
@@ -514,13 +520,13 @@ export function SpendingAnalytics() {
                 <p>
                   <span>Minimum due</span>
                   <strong>
-                    {money.format(row.minimum_payment_amount || 0)}
+                    {formatMoney(row.minimum_payment_amount || 0)}
                   </strong>
                 </p>
                 <p>
                   <span>Last payment</span>
                   <strong>
-                    {money.format(row.last_payment_amount || 0)} ·{" "}
+                    {formatMoney(row.last_payment_amount || 0)} ·{" "}
                     {dateLabel(row.last_payment_date)}
                   </strong>
                 </p>
@@ -554,7 +560,7 @@ export function SpendingAnalytics() {
                   {label(row.type)} · {dateLabel(row.date)}
                 </span>
                 <strong>{row.merchant_name}</strong>
-                <b>{money.format(row.amount)}</b>
+                <b>{formatMoney(row.amount)}</b>
                 <p>{row.explanation}</p>
               </article>
             ))
@@ -657,7 +663,7 @@ export function SpendingAnalytics() {
                   <td>{row.merchant_name}</td>
                   <td>{label(row.accounting_type)}</td>
                   <td>{label(row.category.primary)}</td>
-                  <td>{money.format(row.amount)}</td>
+                  <td>{formatMoney(row.amount)}</td>
                 </tr>
               ))}
             </tbody>

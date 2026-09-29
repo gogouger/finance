@@ -591,11 +591,21 @@ const retirementDefaults: RetirementInputs = {
     sepp_minimum_years: 5,
   },
 };
-const money = new Intl.NumberFormat("en-US", {
+const currency = new Intl.NumberFormat("en-US", {
   style: "currency",
   currency: "USD",
   maximumFractionDigits: 0,
 });
+// Presentation mode is a local visual safeguard for screen-sharing the private
+// dashboard. Values are replaced before React renders them, rather than merely
+// blurred with CSS, so copying visible text does not reveal the balances.
+let presentationModeActive = false;
+const money = {
+  format(value: number) {
+    const formatted = currency.format(value);
+    return presentationModeActive ? formatted.replace(/\d/g, "•") : formatted;
+  },
+};
 const Nav = FinanceNav;
 
 function Landing() {
@@ -1578,6 +1588,19 @@ function Dashboard() {
   const [investments, setInvestments] = useState<InvestmentResult | null>(null);
   const [assets, setAssets] = useState<AssetsResult | null>(null);
   const [error, setError] = useState("");
+  const [presentationMode, setPresentationMode] = useState(
+    () => window.localStorage.getItem("finance-presentation-mode") === "on",
+  );
+  presentationModeActive = presentationMode;
+  useEffect(() => {
+    window.localStorage.setItem(
+      "finance-presentation-mode",
+      presentationMode ? "on" : "off",
+    );
+    return () => {
+      presentationModeActive = false;
+    };
+  }, [presentationMode]);
   useEffect(() => {
     Promise.allSettled([
       fetch("/api/private/dashboard?include_insights=false").then((response) => {
@@ -1634,7 +1657,7 @@ function Dashboard() {
   const bankCash = byKey.get("cash")?.value || 0;
   const brokerageCash = byKey.get("taxable_brokerage_cash")?.value || 0;
   return (
-    <main>
+    <main className={presentationMode ? "presentation-mode" : undefined}>
       <Nav />
       <header className="dashboard-head">
         <a className="back-link" href="/">
@@ -1646,6 +1669,18 @@ function Dashboard() {
           Observed balances and activity—not a generic budget. Every number says
           what it includes, what it leaves out, and how current it is.
         </p>
+        <label className="presentation-toggle">
+          <input
+            type="checkbox"
+            role="switch"
+            checked={presentationMode}
+            onChange={(event) => setPresentationMode(event.target.checked)}
+          />
+          <span aria-hidden="true" />
+          <b>Presentation mode</b>
+          <small>{presentationMode ? "Amounts obscured" : "Show exact amounts"}</small>
+        </label>
+        {presentationMode && <p className="presentation-note" role="status">Showing the dashboard’s real structure and trends with dollar amounts obscured on this device.</p>}
         {dashboard && <p className="reporting-period">Activity metrics: {dashboard.reporting_period.label.toLowerCase()} · {dashboard.reporting_period.start} through {dashboard.reporting_period.end}. Balance metrics are current snapshots.</p>}
       </header>
       {error && (
@@ -1868,7 +1903,7 @@ function Dashboard() {
               )}
             </section>
           </div>
-          <SpendingAnalytics />
+          <SpendingAnalytics presentationMode={presentationMode} />
           {dashboard.insights_loading ? <section className="dashboard-panel recommendation-panel"><div className="section-title"><div><p className="eyebrow">Potential savings</p><h2>Where a review may save money</h2></div><span>analyzing</span></div><p className="quiet">Checking full transaction history for explicit fees, recurring-price changes, and sustained category changes.</p></section> : <RecommendationQueue data={dashboard.recommendations} saved={() => {
             void fetch("/api/private/dashboard")
               .then((response) => response.ok ? response.json() as Promise<DashboardResult> : null)

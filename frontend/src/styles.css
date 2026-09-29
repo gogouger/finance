@@ -532,6 +532,60 @@ footer {
   line-height: 0.95;
 }
 
+.presentation-toggle {
+  display: inline-grid;
+  grid-template-columns: 38px max-content;
+  grid-template-rows: auto auto;
+  column-gap: 9px;
+  align-items: center;
+  margin-top: 18px;
+  cursor: pointer;
+  user-select: none;
+}
+.presentation-toggle input {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  opacity: 0;
+}
+.presentation-toggle > span {
+  position: relative;
+  grid-row: 1 / span 2;
+  inline-size: 38px;
+  block-size: 21px;
+  border: 1px solid rgba(231, 245, 235, .28);
+  border-radius: 999px;
+  background: rgba(231, 245, 235, .08);
+  transition: background 160ms ease, border-color 160ms ease;
+}
+.presentation-toggle > span::after {
+  position: absolute;
+  inset: 3px auto 3px 3px;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: #9fb2a7;
+  content: "";
+  transition: transform 160ms ease, background 160ms ease;
+}
+.presentation-toggle input:checked + span { border-color: #83d7ad; background: rgba(131, 215, 173, .2); }
+.presentation-toggle input:checked + span::after { transform: translateX(17px); background: #83d7ad; }
+.presentation-toggle input:focus-visible + span { outline: 2px solid #f4c86a; outline-offset: 3px; }
+.presentation-toggle b { align-self: end; color: #dcebe2; font-size: .73rem; letter-spacing: .04em; text-transform: uppercase; }
+.presentation-toggle small { align-self: start; color: #82988c; font-size: .66rem; }
+.presentation-note { max-width:680px; margin: 11px 0 -4px; color: #b9c9bf; font-size: .72rem; line-height: 1.45; }
+
+/* The formatter replaces all monetary digits; these rules also soften values
+   that are not currency strings, such as account-return percentages and chart
+   axes, while retaining the layout and the shape of each trend. */
+.presentation-mode .investment-overview :is(.investment-summary-grid strong, .spy-comparison strong, .account-performance-list .account-stats strong),
+.presentation-mode .financial-change-story :is(.change-driver-grid strong, .waterfall-value),
+.presentation-mode .net-worth-projection :is(.chart-label, .projection-controls strong),
+.presentation-mode .analytics-shell :is(.spending-chart text, .yearly-grid > article > div strong, .transaction-browser td:last-child) {
+  color: transparent;
+  text-shadow: 0 0 7px rgba(220, 235, 226, .78);
+  user-select: none;
+}
+
 .dashboard-loading,
 .dashboard-error {
   padding: 30px;
