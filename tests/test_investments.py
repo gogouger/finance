@@ -12,8 +12,10 @@ from pathlib import Path
 import pytest
 
 from backend.finance_app.investments import (
+    AVERAGE_COST_RECONSTRUCTION_REASON,
     _holding_benchmark_comparison,
     _position_identity,
+    _security_total_return_replay,
     _tax_treatment,
 )
 from backend.finance_app.sync import _reported_tax_lots
@@ -201,6 +203,58 @@ def test_price_comparison_can_include_a_dividend_payer_without_claiming_total_re
     assert comparison["status"] == "available"
     assert comparison["benchmark_value"] == 1050
     assert comparison["return_basis"] == "price_return"
+
+
+def test_average_cost_fidelity_rows_can_support_a_dated_performance_reconstruction():
+    lots = [
+        {
+            "quantity": 4,
+            "cost_basis": 400,
+            "acquired_date": "2024-01-01",
+            "benchmark_eligible": False,
+            "benchmark_exclusion_reason": AVERAGE_COST_RECONSTRUCTION_REASON,
+        },
+        {
+            "quantity": 6,
+            "cost_basis": 600,
+            "acquired_date": "2024-06-01",
+            "benchmark_eligible": False,
+            "benchmark_exclusion_reason": AVERAGE_COST_RECONSTRUCTION_REASON,
+        },
+    ]
+    price_comparison = _holding_benchmark_comparison(
+        {"quantity": 10, "institution_value": 1_300},
+        lots,
+        [
+            {"date": "2024-01-01", "value": 100},
+            {"date": "2024-06-01", "value": 110},
+            {"date": "2024-12-31", "value": 120},
+        ],
+        allow_average_cost_reconstruction=True,
+    )
+    replay = _security_total_return_replay(
+        lots,
+        [
+            {"date": "2024-01-01", "value": 100},
+            {"date": "2024-06-01", "value": 120},
+            {"date": "2024-12-31", "value": 150},
+        ],
+        [
+            {"date": "2024-01-01", "value": 100},
+            {"date": "2024-06-01", "value": 110},
+            {"date": "2024-12-31", "value": 120},
+        ],
+        "JABAX",
+    )
+
+    assert price_comparison["status"] == "available"
+    assert price_comparison["basis_method"] == "average_cost_reconstruction"
+    assert "performance reconstruction" in price_comparison["limitations"][0]
+    assert replay["status"] == "available"
+    assert replay["basis_method"] == "average_cost_reconstruction"
+    assert replay["security_value"] == 1_350
+    assert replay["spy_value"] == pytest.approx(1_134.55, abs=0.01)
+    assert "not tax-lot tax reporting" in replay["limitation"]
 
 
 def test_generic_fidelity_core_cash_and_plaid_money_market_share_one_identity():

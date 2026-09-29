@@ -11,6 +11,16 @@ from .investment_scope import ownership_scope
 router = APIRouter()
 
 
+# Fidelity sometimes exports mutual-fund acquisition dates and remaining share
+# quantities while applying one account-level average cost per share.  That is
+# not a tax-lot cost record, but it is enough to reconstruct a dated
+# investment-performance comparison when the owner explicitly imports it.
+AVERAGE_COST_RECONSTRUCTION_REASON = (
+    "This import supplied account-average basis repeated across acquisition dates, "
+    "not individual lot cost basis."
+)
+
+
 def _active_records(storage, owner: str, kind: str) -> list[dict]:
     return [
         item
@@ -128,6 +138,7 @@ def _holding_benchmark_comparison(
     *,
     benchmark: str = "SPY",
     allow_price_only_dividend_exclusion: bool = False,
+    allow_average_cost_reconstruction: bool = False,
 ) -> dict:
     definition = (
         "Compares each covered tax lot with investing the same reported cost "
@@ -145,6 +156,11 @@ def _holding_benchmark_comparison(
                 allow_price_only_dividend_exclusion
                 and item.get("benchmark_exclusion_reason")
                 == "Cash distributions are not present in the available activity history, so holding value cannot be compared fairly with dividend-adjusted SPY."
+            )
+            or (
+                allow_average_cost_reconstruction
+                and item.get("benchmark_exclusion_reason")
+                == AVERAGE_COST_RECONSTRUCTION_REASON
             )
         )
     ]
@@ -250,7 +266,29 @@ def _holding_benchmark_comparison(
         if covered_basis
         else None,
         "definition": definition,
+        "basis_method": (
+            "average_cost_reconstruction"
+            if any(
+                item.get("benchmark_exclusion_reason")
+                == AVERAGE_COST_RECONSTRUCTION_REASON
+                for item in usable_lots
+            )
+            else "reported_lot_basis"
+        ),
         "limitations": [
+            *(
+                [
+                    "Fidelity supplied account-average cost across dated remaining shares. "
+                    "The comparison allocates that verified total basis by the imported "
+                    "share quantities, so it is a performance reconstruction—not tax-lot tax reporting."
+                ]
+                if any(
+                    item.get("benchmark_exclusion_reason")
+                    == AVERAGE_COST_RECONSTRUCTION_REASON
+                    for item in usable_lots
+                )
+                else []
+            ),
             "Actual value is allocated to covered lots by current share quantity.",
             "This is a price-return comparison: it excludes cash dividends, reinvested distributions, taxes, and trading costs on both sides.",
             "A total-return comparison requires the account's actual dividend/distribution history; public dividend data cannot prove what was paid or reinvested in this account.",
@@ -273,6 +311,8 @@ def _security_total_return_replay(lots: list[dict], security_points: list[dict],
             lot.get("benchmark_eligible", True)
             or lot.get("benchmark_exclusion_reason")
             == "Cash distributions are not present in the available activity history, so holding value cannot be compared fairly with dividend-adjusted SPY."
+            or lot.get("benchmark_exclusion_reason")
+            == AVERAGE_COST_RECONSTRUCTION_REASON
         )
     ]
     if not usable or not security_points or not spy_points:
@@ -290,7 +330,34 @@ def _security_total_return_replay(lots: list[dict], security_points: list[dict],
         basis += lot_basis
         actual += lot_basis * float(security_latest["value"]) / float(security_start["value"])
         benchmark += lot_basis * float(spy_latest["value"]) / float(spy_start["value"])
-    return {"status": "available", "symbol": symbol, "basis": _money(basis), "security_value": _money(actual), "spy_value": _money(benchmark), "excess_value": _money(actual - benchmark), "security_return_percent": round((actual / basis - 1) * 100, 2), "spy_return_percent": round((benchmark / basis - 1) * 100, 2), "covered_lots": len(usable), "as_of": min(security_latest["date"], spy_latest["date"]), "definition": "Total-return market replay using the same reported lot basis and acquisition dates; dividends and splits are reinvested in both the security and SPY."}
+    average_cost_reconstruction = any(
+        lot.get("benchmark_exclusion_reason") == AVERAGE_COST_RECONSTRUCTION_REASON
+        for lot in usable
+    )
+    return {
+        "status": "available",
+        "symbol": symbol,
+        "basis": _money(basis),
+        "security_value": _money(actual),
+        "spy_value": _money(benchmark),
+        "excess_value": _money(actual - benchmark),
+        "security_return_percent": round((actual / basis - 1) * 100, 2),
+        "spy_return_percent": round((benchmark / basis - 1) * 100, 2),
+        "covered_lots": len(usable),
+        "as_of": min(security_latest["date"], spy_latest["date"]),
+        "basis_method": (
+            "average_cost_reconstruction"
+            if average_cost_reconstruction
+            else "reported_lot_basis"
+        ),
+        "limitation": (
+            "Fidelity reported account-average cost rather than original per-lot cost. "
+            "This is a dated investment-performance reconstruction, not tax-lot tax reporting."
+            if average_cost_reconstruction
+            else None
+        ),
+        "definition": "Total-return market replay using the same reported lot basis and acquisition dates; dividends and splits are reinvested in both the security and SPY.",
+    }
 
 
 @router.get("/api/private/investments/positions")
@@ -561,6 +628,7 @@ def investment_positions(request: Request) -> dict:
             matching_lots,
             spy_price_points,
             allow_price_only_dividend_exclusion=True,
+            allow_average_cost_reconstruction=True,
         )
         holding["security_total_return_replay"] = _security_total_return_replay(
             matching_lots,

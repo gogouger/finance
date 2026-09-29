@@ -434,6 +434,7 @@ type InvestmentHolding = {
         return_basis: string;
         cadence: string;
         alignment: string;
+        basis_method: "reported_lot_basis" | "average_cost_reconstruction";
         definition: string;
         limitations: string[];
       }
@@ -444,7 +445,7 @@ type InvestmentHolding = {
         definition: string;
   };
   security_total_return_replay?:
-    | { status: "available"; symbol: string; basis: number; security_value: number; spy_value: number; excess_value: number; security_return_percent: number; spy_return_percent: number; covered_lots: number; as_of: string; definition: string }
+    | { status: "available"; symbol: string; basis: number; security_value: number; spy_value: number; excess_value: number; security_return_percent: number; spy_return_percent: number; covered_lots: number; as_of: string; basis_method: "reported_lot_basis" | "average_cost_reconstruction"; limitation: string | null; definition: string }
     | { status: "collecting" };
 };
 type AvailableBenchmarkComparison = Extract<InvestmentHolding["benchmark_comparison"], { status: "available" }>;
@@ -1396,7 +1397,7 @@ function InvestmentOverview({ data: initialData }: { data: InvestmentResult }) {
             return <article key={`${holding.account_id}-${holding.security_id}`}>
               <span>{holding.ticker_symbol || holding.security_name || "Investment"}</span>
               <strong className={ahead ? "positive" : "negative"}>{ahead ? "Ahead " : "Behind "}{money.format(Math.abs(comparison.excess_value))}</strong>
-              <small>{comparison.actual_return_percent?.toFixed(1)}% you · {comparison.benchmark_return_percent?.toFixed(1)}% SPY</small>
+              <small>{comparison.actual_return_percent?.toFixed(1)}% you · {comparison.benchmark_return_percent?.toFixed(1)}% SPY{comparison.basis_method === "average_cost_reconstruction" ? " · average-cost reconstruction" : ""}</small>
             </article>;
           })}
         </div>
@@ -1409,7 +1410,7 @@ function InvestmentOverview({ data: initialData }: { data: InvestmentResult }) {
           {replayHoldings.slice().sort((a, b) => Math.abs(b.security_total_return_replay.excess_value) - Math.abs(a.security_total_return_replay.excess_value)).map((holding) => {
             const replay = holding.security_total_return_replay;
             const ahead = replay.excess_value >= 0;
-            return <article key={`replay-${holding.account_id}-${holding.security_id}`}><span>{holding.ticker_symbol || holding.security_name || "Investment"}</span><strong className={ahead ? "positive" : "negative"}>{ahead ? "Ahead " : "Behind "}{money.format(Math.abs(replay.excess_value))}</strong><small>{replay.security_return_percent.toFixed(1)}% security total return · {replay.spy_return_percent.toFixed(1)}% SPY</small></article>;
+            return <article key={`replay-${holding.account_id}-${holding.security_id}`}><span>{holding.ticker_symbol || holding.security_name || "Investment"}</span><strong className={ahead ? "positive" : "negative"}>{ahead ? "Ahead " : "Behind "}{money.format(Math.abs(replay.excess_value))}</strong><small>{replay.security_return_percent.toFixed(1)}% security total return · {replay.spy_return_percent.toFixed(1)}% SPY{replay.basis_method === "average_cost_reconstruction" ? " · average-cost reconstruction" : ""}</small></article>;
           })}
         </div>
       </section>}
@@ -1448,7 +1449,7 @@ function InvestmentOverview({ data: initialData }: { data: InvestmentResult }) {
                     <div className={`holding-benchmark ${holding.benchmark_comparison.status}`}>
                       {holding.benchmark_comparison.status === "available" ? <>
                         <span><strong>{holding.benchmark_comparison.excess_value >= 0 ? "Beat" : "Trailed"} {holding.benchmark_comparison.benchmark} by {money.format(Math.abs(holding.benchmark_comparison.excess_value))}</strong><small>Same {money.format(holding.benchmark_comparison.basis_covered)} invested on the covered lot dates</small></span>
-                        <span><strong>{holding.benchmark_comparison.actual_return_percent?.toFixed(1)}% vs. {holding.benchmark_comparison.benchmark_return_percent?.toFixed(1)}%</strong><small>{holding.benchmark_comparison.covered_lots} of {holding.benchmark_comparison.total_lots} lots · {holding.benchmark_comparison.cadence}-adjusted, through {new Date(`${holding.benchmark_comparison.as_of}T00:00:00`).toLocaleDateString()}</small></span>
+                        <span><strong>{holding.benchmark_comparison.actual_return_percent?.toFixed(1)}% vs. {holding.benchmark_comparison.benchmark_return_percent?.toFixed(1)}%</strong><small>{holding.benchmark_comparison.covered_lots} of {holding.benchmark_comparison.total_lots} lots · {holding.benchmark_comparison.basis_method === "average_cost_reconstruction" ? "average-cost reconstruction · " : ""}{holding.benchmark_comparison.cadence}-adjusted, through {new Date(`${holding.benchmark_comparison.as_of}T00:00:00`).toLocaleDateString()}</small></span>
                       </> : <><span><strong>{holding.benchmark_comparison.benchmark} comparison collecting data</strong><small>{holding.benchmark_comparison.reason}</small></span></>}
                     </div>
                     {lots.length > 0 && <details className="lot-details"><summary>{lots.length} Fidelity tax {lots.length === 1 ? "lot" : "lots"}</summary><div>{lots.map((lot) => <p key={`${lot.symbol}-${lot.acquired_date}`}><span><strong>{new Date(`${lot.acquired_date}T00:00:00`).toLocaleDateString()}</strong><small>{lot.quantity.toLocaleString()} shares</small></span><span><strong>{lot.cost_basis === null ? "Unknown basis" : money.format(lot.cost_basis)}</strong><small>{lot.cost_basis === null || !lot.quantity ? "" : `${money.format(lot.cost_basis / lot.quantity)} per share`}</small></span></p>)}</div></details>}
