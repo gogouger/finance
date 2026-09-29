@@ -882,12 +882,13 @@ function Housing() {
             <Slider label="Time in home" value={inputs.years} min={1} max={30} step={1} format={(v) => `${v} years`} change={update("years")} />
             <Slider label="Purchase costs" value={inputs.buy_closing_cost_percent} min={0} max={8} step={0.25} format={(v) => `${v}%`} change={update("buy_closing_cost_percent")} />
             <Slider label="Sale costs" value={inputs.sell_cost_percent} min={0} max={12} step={0.25} format={(v) => `${v}%`} change={update("sell_cost_percent")} />
+            {result && result.sensitivity.length > 0 && <article className="housing-sensitivity" aria-label="Sensitivity analysis"><p className="eyebrow">What matters most</p><h3>Which assumptions actually move the result?</h3><p>Each test moves one assumption up and down while holding every other input fixed.</p><div>{result.sensitivity.slice(0, 3).map((item) => <p key={item.field}><span>{item.label} ±{Math.abs(item.higher.assumption - item.base).toFixed(1)} points</span><strong>{money.format(item.swing)} swing</strong></p>)}</div></article>}
             <button type="submit" disabled={running}>{running ? "Updating…" : "Refresh comparison"}</button>
             {completedAt && !running && <p className="completion" role="status">Updated at {completedAt}</p>}
           </section>
         </div>
         <section className="housing-visual-sticky" aria-live="polite">
-          {result && final ? <HousingVisuals years={result.years} initialCash={result.initial_cash_allocation} sensitivity={result.sensitivity} stage={activeStage} /> : <p className="dashboard-loading">Building the comparison…</p>}
+          {result && final ? <HousingVisuals years={result.years} initialCash={result.initial_cash_allocation} stage={activeStage} /> : <p className="dashboard-loading">Building the comparison…</p>}
         </section>
       </form>
       {result && <details className="housing-accessible-results"><summary>Year-by-year accessible results and definitions</summary><p>Buyer wealth is sale proceeds after remaining debt and estimated sale costs. Renter wealth begins with avoided cash-to-close, then adds or withdraws the monthly cash-flow difference. Costs and growth assumptions compound monthly.</p><div className="table-wrap"><table><thead><tr><th>Year</th><th>Buy after sale</th><th>Rent + invest</th><th>Difference</th></tr></thead><tbody>{result.years.map((year) => <tr key={year.year}><td>{year.year}</td><td>{money.format(year.buyer_net_wealth)}</td><td>{money.format(year.renter_investments)}</td><td>{money.format(year.buyer_advantage)}</td></tr>)}</tbody></table></div></details>}

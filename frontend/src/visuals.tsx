@@ -130,7 +130,7 @@ function Composition({ pieces }: { pieces: { label: string; value: number; color
 
 type HousingSensitivity = { field: string; label: string; unit: string; base: number; lower: { assumption: number; buyer_advantage: number }; higher: { assumption: number; buyer_advantage: number }; swing: number };
 
-export function HousingVisuals({ years, initialCash, sensitivity, stage = 0 }: { years: HousingYear[]; initialCash: InitialCashAllocation; sensitivity: HousingSensitivity[]; stage?: number }) {
+export function HousingVisuals({ years, initialCash, stage = 0 }: { years: HousingYear[]; initialCash: InitialCashAllocation; stage?: number }) {
   const [selected, setSelected] = useState(years.length - 1);
   const index = Math.min(selected, years.length - 1);
   const row = years[index];
@@ -220,7 +220,6 @@ export function HousingVisuals({ years, initialCash, sensitivity, stage = 0 }: {
     <div className="story-callout"><strong>{crossover ? `Buying first pulls ahead in year ${crossover}.` : "Buying never pulls ahead inside this window."}</strong><span>The highlighted explanation follows the walkthrough on the left.</span></div>
     <label className="year-scrubber"><span>Explain year {row.year}</span><input type="range" min={0} max={years.length - 1} value={index} onChange={(event) => setSelected(Number(event.target.value))} /></label>
     <article className="housing-stage-evidence" aria-live="polite"><p className="eyebrow">{active.eyebrow}</p><h4>{active.title}</h4><p>{active.note}</p><dl>{active.evidence.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{money.format(value)}</dd></div>)}</dl></article>
-    {stage === 6 && sensitivity.length > 0 && <article className="housing-sensitivity"><p className="eyebrow">What matters most</p><h4>These are the assumptions moving the answer.</h4><p>Each row changes one assumption up and down while every other input stays fixed.</p><div>{sensitivity.slice(0, 3).map((item) => <p key={item.field}><span>{item.label} ±{Math.abs(item.higher.assumption - item.base).toFixed(1)} points</span><strong>{money.format(item.swing)} swing</strong></p>)}</div></article>}
   </section>;
 }
 
