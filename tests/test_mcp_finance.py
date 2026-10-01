@@ -184,6 +184,38 @@ def _call(base_url: str, access_token: str, tool: str, arguments=None):
     )
 
 
+def test_classification_review_queue_and_single_owner_decision(mcp_service):
+    grant = _grant(
+        mcp_service,
+        ["finance:classification:review", "finance:classification:write"],
+    )
+    tokens = _exchange(mcp_service, grant)
+    queue = _call(
+        mcp_service, tokens["access_token"], "finance.classification.review_queue"
+    )
+    assert queue["sensitivity"] == "classification_review"
+    assert queue["data"]["open_count"] > 0
+    item = queue["data"]["items"][0]
+    assert {"transaction_id", "merchant_name", "date", "amount", "current_category"} <= set(item)
+
+    decision = _call(
+        mcp_service,
+        tokens["access_token"],
+        "finance.classification.classify_transaction",
+        {
+            "transaction_id": item["transaction_id"],
+            "primary": "food_and_drink",
+            "detailed": "groceries",
+            "tags": ["household"],
+        },
+    )
+    assert decision["sensitivity"] == "classification_write"
+    assert decision["data"]["status"] == "classified"
+    assert decision["data"]["category"] == {
+        "primary": "food_and_drink", "detailed": "groceries"
+    }
+
+
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001
         return None

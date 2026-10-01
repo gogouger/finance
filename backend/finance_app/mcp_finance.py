@@ -9,6 +9,7 @@ import urllib.parse
 import urllib.error
 import urllib.request
 from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -18,7 +19,13 @@ from pydantic import BaseModel, Field, field_validator
 
 from .accounting import build_accounting_view
 from .auth import require_fresh_owner, require_owner
-from .classification import effective_classifications
+from .classification import (
+    Category,
+    ClassificationInput,
+    _effective_classification,
+    _owner_classification,
+    effective_classifications,
+)
 from .investment_scope import is_custodial_account
 from .scenarios import calculate_scenario
 
@@ -35,6 +42,8 @@ FINANCE_SCOPES = {
     "finance:investments",
     "finance:scenarios",
     "finance:transactions:detail",
+    "finance:classification:review",
+    "finance:classification:write",
 }
 ATHLETICS_SCOPES = {"athletics:training:summary"}
 LIBRARY_SCOPES = {"library:reading:metrics", "library:write"}
@@ -48,6 +57,8 @@ TOOL_SCOPES = {
     "finance.scenarios.list": "finance:scenarios",
     "finance.scenario.calculate": "finance:scenarios",
     "finance.transactions.list": "finance:transactions:detail",
+    "finance.classification.review_queue": "finance:classification:review",
+    "finance.classification.classify_transaction": "finance:classification:write",
     "athletics.training.summary": "athletics:training:summary",
     "library.reading.metrics": "library:reading:metrics",
     "library.books.add_owned": "library:write",
@@ -731,6 +742,107 @@ def _library_command(action: str, arguments: dict[str, Any]) -> dict:
     )
 
 
+def _classification_review_queue(storage, owner: str) -> dict:
+    """Return the owner-reviewable classification queue through the MCP boundary.
+
+    This deliberately exposes merchant, date, amount, and an opaque transaction id:
+    those are the minimum facts needed to make a category decision.  Account numbers,
+    institution identifiers, and balance data stay out of the tool response.
+    """
+    stored = {
+        item["transaction_id"]: item
+        for item in storage.list_transaction_classifications(owner)
+    }
+    suggestions = {
+        item["transaction_id"]: item
+        for item in storage.list_classification_suggestions(owner)
+        if item.get("status") == "proposed"
+    }
+    rules = storage.list_classification_rules(owner)
+    items = []
+    for transaction in storage.list_financial_records(owner, "transaction"):
+        if transaction.get("removed"):
+            continue
+        effective, conflict = _effective_classification(
+            transaction, stored.get(transaction["transaction_id"]), rules
+        )
+        suggestion = suggestions.get(transaction["transaction_id"])
+        if conflict:
+            reason = "rule_conflict"
+        elif suggestion:
+            reason = "ai_suggestion"
+        elif effective["needs_review"]:
+            reason = "low_confidence"
+        else:
+            continue
+        item = {
+            "transaction_id": transaction["transaction_id"],
+            "date": transaction.get("date"),
+            "amount": round(abs(float(transaction.get("amount") or 0)), 2),
+            "merchant_name": transaction.get("merchant_name") or transaction.get("name"),
+            "reason": reason,
+            "current_category": effective.get("category"),
+            "confidence": effective.get("confidence"),
+            "explanation": effective.get("explanation"),
+        }
+        if suggestion:
+            item["suggestion"] = {
+                key: suggestion[key]
+                for key in ("id", "category", "tags", "confidence", "reason")
+                if key in suggestion
+            }
+        if conflict:
+            item["conflict"] = {
+                "reason": conflict.get("reason"),
+                "competing_rule_names": [
+                    rule.get("name") for rule in conflict.get("competing_rules", [])
+                ],
+            }
+        items.append(item)
+    items.sort(key=lambda item: (item.get("date") or "", item["transaction_id"]), reverse=True)
+    # Keep one response well below the MCP response limit.  The omitted count
+    # lets an agent ask the owner to resolve the queue in batches.
+    return {"currency": "USD", "open_count": len(items), "items": items[:100], "truncated": len(items) > 100}
+
+
+def _mcp_classify_transaction(storage, owner: str, arguments: dict[str, Any]) -> dict:
+    allowed = {"transaction_id", "primary", "detailed", "merchant_name", "tags"}
+    unknown = set(arguments) - allowed
+    if unknown:
+        raise HTTPException(status_code=422, detail=f"unsupported classification fields: {', '.join(sorted(unknown))}")
+    transaction_id = arguments.get("transaction_id")
+    if not isinstance(transaction_id, str) or not transaction_id or len(transaction_id) > 160:
+        raise HTTPException(status_code=422, detail="a valid transaction_id is required")
+    source = next(
+        (
+            item for item in storage.list_financial_records(owner, "transaction")
+            if item.get("transaction_id") == transaction_id and not item.get("removed")
+        ),
+        None,
+    )
+    if source is None:
+        raise HTTPException(status_code=404, detail="transaction not found")
+    try:
+        payload = ClassificationInput(
+            merchant_name=arguments.get("merchant_name"),
+            category=Category(primary=arguments["primary"], detailed=arguments["detailed"]),
+            tags=arguments.get("tags", []),
+        )
+    except (KeyError, ValueError) as error:
+        raise HTTPException(status_code=422, detail="primary and detailed categories are required") from error
+    record = _owner_classification(
+        transaction_id, payload, abs(Decimal(str(source.get("amount", 0))))
+    )
+    storage.save_transaction_classification(owner, transaction_id, record)
+    return {
+        "transaction_id": transaction_id,
+        "merchant_name": record.get("merchant_name"),
+        "category": record["category"],
+        "tags": record["tags"],
+        "status": "classified",
+    }
+
+
 def _execute_tool(storage, owner: str, payload: ToolCall) -> tuple[dict, str, dict | None]:
     accounting = _accounting(storage, owner) if payload.tool.startswith("finance.") else None
     if payload.tool == "finance.summary":
@@ -802,6 +914,10 @@ def _execute_tool(storage, owner: str, payload: ToolCall) -> tuple[dict, str, di
         ]
         date_range = {"start": start.isoformat(), "end": end.isoformat()}
         return {"currency": "USD", "transactions": transactions}, "transaction_detail", date_range
+    if payload.tool == "finance.classification.review_queue":
+        return _classification_review_queue(storage, owner), "classification_review", None
+    if payload.tool == "finance.classification.classify_transaction":
+        return _mcp_classify_transaction(storage, owner, payload.arguments), "classification_write", None
     if payload.tool == "athletics.training.summary":
         return _athletics_summary(), "aggregate_training", None
     if payload.tool == "library.reading.metrics":
@@ -894,6 +1010,25 @@ MCP_TOOLS = {
             "additionalProperties": False,
         },
     },
+    "finance.classification.review_queue": {
+        "description": "Read the owner-reviewable transaction-category queue with the merchant, date, amount, current category, and any AI suggestion or rule conflict. It excludes accounts and balances.",
+        "inputSchema": {"type": "object", "additionalProperties": False},
+    },
+    "finance.classification.classify_transaction": {
+        "description": "Save one owner-approved category for a transaction returned by the classification review queue. This changes only that transaction; it does not create a broad merchant rule.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "transaction_id": {"type": "string", "maxLength": 160},
+                "primary": {"type": "string", "maxLength": 80},
+                "detailed": {"type": "string", "maxLength": 80},
+                "merchant_name": {"type": "string", "maxLength": 160},
+                "tags": {"type": "array", "items": {"type": "string", "maxLength": 80}, "maxItems": 30},
+            },
+            "required": ["transaction_id", "primary", "detailed"],
+            "additionalProperties": False,
+        },
+    },
     "athletics.training.summary": {
         "description": "Read aggregate running and lifting trends without routes, activity timestamps, titles, or per-workout detail.",
         "inputSchema": {"type": "object", "additionalProperties": False},
@@ -965,7 +1100,7 @@ def _mcp_tool_list(grant: dict) -> list[dict]:
             "name": name,
             **definition,
             "annotations": {
-                "readOnlyHint": name == "library.reading.metrics" or not name.startswith("library."),
+                "readOnlyHint": TOOL_SCOPES[name] not in {"finance:classification:write", "library:write"},
                 "destructiveHint": False,
                 "openWorldHint": False,
             },
