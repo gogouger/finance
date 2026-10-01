@@ -347,6 +347,37 @@ def test_passkey_fresh_authorization_screen_displays_scoped_consent(mcp_service)
     assert tokens["scope"] == "athletics:training:summary library:reading:metrics"
 
 
+def test_oauth_authorization_accepts_every_advertised_scope(mcp_service):
+    """Discovery and consent must agree as the personal gateway grows."""
+    registered = _register_client(mcp_service, name="Full-access client test")
+    discovery = _json(
+        urllib.request.Request(
+            f"{mcp_service}/.well-known/oauth-authorization-server"
+        )
+    )
+    advertised_scopes = discovery["scopes_supported"]
+    assert len(advertised_scopes) > 10
+    query = urllib.parse.urlencode(
+        {
+            "response_type": "code",
+            "client_id": registered["client_id"],
+            "redirect_uri": "http://127.0.0.1:8765/oauth/callback",
+            "scope": " ".join(advertised_scopes),
+            "code_challenge": CHALLENGE,
+            "code_challenge_method": "S256",
+            "state": "all-scopes",
+            "resource": f"{mcp_service}/mcp",
+        }
+    )
+    request = urllib.request.Request(
+        f"{mcp_service}/mcp/oauth/authorize?{query}", headers=_fresh_owner()
+    )
+    with urllib.request.urlopen(request) as response:
+        page = response.read().decode()
+    assert "Full-access client test" in page
+    assert "finance:classification:write" in page
+
+
 def test_dynamic_registration_binds_consent_to_registered_redirect_uri(mcp_service):
     registered = _register_client(mcp_service, name="Codex on office desktop")
     query = urllib.parse.urlencode(

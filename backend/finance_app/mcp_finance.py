@@ -184,7 +184,10 @@ class GrantCreate(BaseModel):
     client_id: str = Field(min_length=3, max_length=120)
     client_name: str = Field(min_length=3, max_length=120)
     redirect_uri: str = Field(pattern=r"^https?://", max_length=500)
-    scopes: list[str] = Field(min_length=1, max_length=10)
+    # A personal gateway can expose several independently-scoped project
+    # capabilities. Keep this bounded, but do not reject a client that asks
+    # for every capability advertised in OAuth discovery.
+    scopes: list[str] = Field(min_length=1, max_length=32)
     code_challenge: str = Field(min_length=43, max_length=128)
     code_challenge_method: Literal["S256"]
 
